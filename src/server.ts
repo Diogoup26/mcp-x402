@@ -1,13 +1,13 @@
-﻿import { lookup } from "node:dns/promises";
+import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { randomUUID } from "node:crypto";
 import { createMcpExpressApp } from "@modelcontextprotocol/express";
 import { toNodeHandler } from "@modelcontextprotocol/node";
-import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
+import { createMcpHandler, McpServer, type ServerContext } from "@modelcontextprotocol/server";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { paymentMiddleware, x402ResourceServer } from "@x402/express";
-import { createPaymentWrapper } from "@x402/mcp";
+import { createPaymentWrapper, type PaymentWrappedHandler } from "@x402/mcp";
 import { load } from "cheerio";
 import OpenAI from "openai";
 import * as z from "zod/v4";
@@ -284,6 +284,27 @@ const paidAnalyzeUrlTool = createPaymentWrapper(paymentServer, {
   },
 });
 
+function adaptPaymentWrapperForMcpV2(
+  wrapper: ReturnType<typeof createPaymentWrapper>,
+) {
+  return <TArgs extends Record<string, unknown>>(
+    handler: PaymentWrappedHandler<TArgs>,
+  ) => {
+    const callback = wrapper(handler);
+
+    return (args: TArgs, context: ServerContext) =>
+      callback(args, {
+        ...context,
+        _meta: context.mcpReq._meta,
+      });
+  };
+}
+
+const paidConsultToolV2 =
+  adaptPaymentWrapperForMcpV2(paidConsultTool);
+const paidAnalyzeUrlToolV2 =
+  adaptPaymentWrapperForMcpV2(paidAnalyzeUrlTool);
+
 const handler = createMcpHandler(() => {
   const server = new McpServer({
     name: "diogo-ai-service",
@@ -299,7 +320,7 @@ const handler = createMcpHandler(() => {
         prompt: z.string().min(1).max(4000).describe("Pergunta ou instruÃ§Ã£o para a IA"),
       }),
     },
-    paidConsultTool(async ({ prompt }) => {
+    paidConsultToolV2(async ({ prompt }) => {
       try {
         const answer = await askOpenAI(prompt);
         return { content: [{ type: "text", text: answer }] };
@@ -321,7 +342,7 @@ const handler = createMcpHandler(() => {
         "Extrai uma pÃ¡gina web pÃºblica e produz um relatÃ³rio com resumo, factos, riscos e aÃ§Ãµes recomendadas.",
       inputSchema: analyzeUrlInput,
     },
-    paidAnalyzeUrlTool(async ({ url, objetivo }) => {
+    paidAnalyzeUrlToolV2(async ({ url, objetivo }) => {
       try {
         const analysis = await analyzePage({ url, objetivo });
 
@@ -447,12 +468,3 @@ app.listen(PORT, HOST, () => {
     `AnÃ¡lise x402 em http://${displayHost}:${PORT}/analyze (${X402_PRICE}, Base Sepolia)`,
   );
 });
-
-
-
-
-
-
-
-
-
