@@ -9,16 +9,44 @@ const MAX_PAYMENT = 10_000n;
 const USDC_BASE_SEPOLIA =
   "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
 
-const [url, ...objectiveParts] = process.argv.slice(2);
-const objetivo = objectiveParts.join(" ").trim();
+type ToolName = "analisar_url" | "consultar_ia";
 
-if (!url || !objetivo) {
+const [requestedTool, ...argumentParts] = process.argv.slice(2);
+
+let tool: ToolName;
+let toolArguments: Record<string, string>;
+
+if (requestedTool === "analisar_url") {
+  const [url, ...objectiveParts] = argumentParts;
+  const objetivo = objectiveParts.join(" ").trim();
+
+  if (!url || !objetivo) {
+    console.error(
+      'Uso: node --env-file=.env.test .\\dist\\mcp-buyer.js analisar_url <URL> "<objetivo>"',
+    );
+    process.exit(1);
+  }
+
+  tool = requestedTool;
+  toolArguments = { url, objetivo };
+} else if (requestedTool === "consultar_ia") {
+  const prompt = argumentParts.join(" ").trim();
+
+  if (!prompt) {
+    console.error(
+      'Uso: node --env-file=.env.test .\\dist\\mcp-buyer.js consultar_ia "<prompt>"',
+    );
+    process.exit(1);
+  }
+
+  tool = requestedTool;
+  toolArguments = { prompt };
+} else {
   console.error(
-    'Uso: node --env-file=.env.test .\\dist\\mcp-buyer.js <URL> "<objetivo>"',
+    'Ferramenta invalida. Use "analisar_url" ou "consultar_ia".',
   );
   process.exit(1);
 }
-
 const privateKey = process.env.EVM_PRIVATE_KEY;
 
 if (!privateKey || !/^0x[0-9a-fA-F]{64}$/.test(privateKey)) {
@@ -85,10 +113,7 @@ try {
     transport as unknown as Parameters<typeof client.connect>[0],
   );
 connected = true;
-  const result = await client.callTool("analisar_url", {
-    url,
-    objetivo,
-  });
+  const result = await client.callTool(tool, toolArguments);
 
     const paymentSettled =
     result.paymentResponse?.success === true;
