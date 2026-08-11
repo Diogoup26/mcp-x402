@@ -344,6 +344,7 @@ const handler = createMcpHandler(() => {
 });
 
 const app = createMcpExpressApp({ host: HOST, allowedHosts: ['localhost', '127.0.0.1', process.env.RAILWAY_PUBLIC_DOMAIN ?? 'mcp-x402-production.up.railway.app'] });
+app.set('trust proxy', 1);
 const nodeHandler = toNodeHandler(handler);
 const requireAnalyzePayment = paymentMiddleware(
   {
@@ -423,4 +424,5 @@ app.listen(PORT, HOST, () => {
     `AnÃ¡lise x402 em http://${displayHost}:${PORT}/analyze (${X402_PRICE}, Base Sepolia)`,
   );
 });
+
 
