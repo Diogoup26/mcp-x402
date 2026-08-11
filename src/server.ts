@@ -10,6 +10,8 @@ import { createPaymentWrapper } from "@x402/mcp";
 import { load } from "cheerio";
 import OpenAI from "openai";
 import * as z from "zod/v4";
+import helmet from "helmet";
+import { rateLimit } from "express-rate-limit";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const HOST = process.env.HOST ?? "0.0.0.0";
@@ -345,6 +347,8 @@ const handler = createMcpHandler(() => {
 
 const app = createMcpExpressApp({ host: HOST, allowedHosts: ['localhost', '127.0.0.1', process.env.RAILWAY_PUBLIC_DOMAIN ?? 'mcp-x402-production.up.railway.app'] });
 app.set('trust proxy', 1);
+app.use(helmet());
+app.use(rateLimit({ windowMs: 15 * 60 * 1000, limit: 100, standardHeaders: "draft-8", legacyHeaders: false, message: { error: "Too many requests. Try again later." } }));
 const nodeHandler = toNodeHandler(handler);
 const requireAnalyzePayment = paymentMiddleware(
   {
@@ -424,5 +428,7 @@ app.listen(PORT, HOST, () => {
     `AnÃ¡lise x402 em http://${displayHost}:${PORT}/analyze (${X402_PRICE}, Base Sepolia)`,
   );
 });
+
+
 
 

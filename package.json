@@ -25,6 +25,8 @@
     "@x402/mcp": "^2.21.0",
     "cheerio": "^1.2.0",
     "express": "^5.2.1",
+    "express-rate-limit": "^8.6.2",
+    "helmet": "^8.3.0",
     "openai": "^7.4.0",
     "viem": "^2.55.13",
     "zod": "^4.4.3"
