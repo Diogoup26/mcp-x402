@@ -1,5 +1,6 @@
 ﻿import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import { randomUUID } from "node:crypto";
 import { createMcpExpressApp } from "@modelcontextprotocol/express";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
@@ -348,6 +349,24 @@ const handler = createMcpHandler(() => {
 const app = createMcpExpressApp({ host: HOST, allowedHosts: ['localhost', '127.0.0.1', process.env.RAILWAY_PUBLIC_DOMAIN ?? 'mcp-x402-production.up.railway.app'] });
 app.set('trust proxy', 1);
 app.use(helmet());
+app.use((req, res, next) => {
+  const startedAt = Date.now();
+  const requestId = randomUUID();
+  res.setHeader('x-request-id', requestId);
+  res.on('finish', () => {
+    console.log(JSON.stringify({
+      timestamp: new Date().toISOString(),
+      level: 'info',
+      event: 'http_request',
+      requestId,
+      method: req.method,
+      path: req.path,
+      status: res.statusCode,
+      durationMs: Date.now() - startedAt,
+    }));
+  });
+  next();
+});
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, limit: 100, standardHeaders: "draft-8", legacyHeaders: false, message: { error: "Too many requests. Try again later." } }));
 const nodeHandler = toNodeHandler(handler);
 const requireAnalyzePayment = paymentMiddleware(
@@ -428,6 +447,10 @@ app.listen(PORT, HOST, () => {
     `AnÃ¡lise x402 em http://${displayHost}:${PORT}/analyze (${X402_PRICE}, Base Sepolia)`,
   );
 });
+
+
+
+
 
 
 
