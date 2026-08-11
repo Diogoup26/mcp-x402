@@ -64,7 +64,7 @@ async function askOpenAI(
     model: OPENAI_MODEL,
     max_output_tokens: maxOutputTokens,
     instructions:
-      "Responde em portuguÃªs europeu, de forma clara, correta e concisa. Usa apenas os dados fornecidos e nÃ£o inventes factos. NÃ£o reveles raciocÃ­nio interno.",
+      "Responde na mesma lingua da pergunta do utilizador, de forma clara, correta e concisa. Para perguntas gerais, usa o teu conhecimento para responder com rigor. Ao analisar conteudo fornecido, distingue factos desse conteudo de inferencias. Nao inventes fontes, links, dados recentes ou resultados de pesquisa. Se forem precisos dados atuais ou uma fonte especifica, explica essa limitacao. Nao reveles raciocinio interno.",
     input: prompt,
   });
 
