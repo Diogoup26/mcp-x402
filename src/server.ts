@@ -54,9 +54,14 @@ function getOpenAIClient(): OpenAI {
   return openAIClient;
 }
 
-async function askOpenAI(prompt: string): Promise<string> {
+async function askOpenAI(
+  prompt: string,
+  operation: "consultar_ia" | "analisar_url",
+  maxOutputTokens: number,
+): Promise<string> {
   const response = await getOpenAIClient().responses.create({
     model: OPENAI_MODEL,
+    max_output_tokens: maxOutputTokens,
     instructions:
       "Responde em portuguÃªs europeu, de forma clara, correta e concisa. Usa apenas os dados fornecidos e nÃ£o inventes factos. NÃ£o reveles raciocÃ­nio interno.",
     input: prompt,
@@ -85,6 +90,8 @@ async function askOpenAI(prompt: string): Promise<string> {
       timestamp: new Date().toISOString(),
       level: "info",
       event: "openai_usage",
+      operation,
+      maxOutputTokens,
       model: OPENAI_MODEL,
       inputTokens,
       cachedInputTokens,
@@ -276,7 +283,10 @@ Se uma informaÃ§Ã£o nÃ£o estiver no conteÃºdo, declara que nÃ£o foi en
 
 CONTEÃšDO DA PÃGINA:
 ${page.text}
-`);
+`,
+    "analisar_url",
+    4_000,
+  );
 
   return {
     source: page.finalUrl,
@@ -358,7 +368,7 @@ const handler = createMcpHandler(() => {
     },
     paidConsultToolV2(async ({ prompt }) => {
       try {
-        const answer = await askOpenAI(prompt);
+        const answer = await askOpenAI(prompt, "consultar_ia", 2_000);
         return { content: [{ type: "text", text: answer }] };
       } catch (error) {
         const message = error instanceof Error ? error.message : "Erro desconhecido";
