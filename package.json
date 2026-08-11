@@ -8,7 +8,9 @@
     "dev": "tsx src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "analyze": "node --env-file=.env.test ./dist/buyer.js"
+    "analyze": "node --env-file=.env.test ./dist/buyer.js",
+    "mcp:analyze": "node --env-file=.env.test ./dist/mcp-buyer.js analisar_url",
+    "mcp:consult": "node --env-file=.env.test ./dist/mcp-buyer.js consultar_ia"
   },
   "keywords": [],
   "author": "",
