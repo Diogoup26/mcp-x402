@@ -62,6 +62,42 @@ async function askOpenAI(prompt: string): Promise<string> {
     input: prompt,
   });
 
+    const usage = response.usage;
+  const inputTokens = usage?.input_tokens ?? 0;
+  const cachedInputTokens =
+    usage?.input_tokens_details?.cached_tokens ?? 0;
+  const outputTokens = usage?.output_tokens ?? 0;
+  const reasoningTokens =
+    usage?.output_tokens_details?.reasoning_tokens ?? 0;
+  const uncachedInputTokens = Math.max(
+    0,
+    inputTokens - cachedInputTokens,
+  );
+
+  const estimatedOpenAiCostUsd =
+    (uncachedInputTokens * 0.25 +
+      cachedInputTokens * 0.025 +
+      outputTokens * 2) /
+    1_000_000;
+
+  console.log(
+    JSON.stringify({
+      timestamp: new Date().toISOString(),
+      level: "info",
+      event: "openai_usage",
+      model: OPENAI_MODEL,
+      inputTokens,
+      cachedInputTokens,
+      outputTokens,
+      reasoningTokens,
+      totalTokens:
+        usage?.total_tokens ?? inputTokens + outputTokens,
+      estimatedOpenAiCostUsd: Number(
+        estimatedOpenAiCostUsd.toFixed(8),
+      ),
+    }),
+  );
+
   const answer = response.output_text.trim();
 
   if (!answer) {
