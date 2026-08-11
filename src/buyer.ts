@@ -1,4 +1,4 @@
-import { x402Client, wrapFetchWithPayment } from "@x402/fetch";
+﻿import { x402Client, wrapFetchWithPayment } from "@x402/fetch";
 import { registerExactEvmScheme } from "@x402/evm/exact/client";
 import { privateKeyToAccount } from "viem/accounts";
 
@@ -15,7 +15,7 @@ if (!url || !objetivo) {
 const privateKey = process.env.EVM_PRIVATE_KEY;
 
 if (!privateKey || !/^0x[0-9a-fA-F]{64}$/.test(privateKey)) {
-  throw new Error("A chave EVM_PRIVATE_KEY está ausente ou inválida.");
+  throw new Error("A chave EVM_PRIVATE_KEY estÃ¡ ausente ou invÃ¡lida.");
 }
 
 const signer = privateKeyToAccount(privateKey as `0x${string}`);
@@ -26,7 +26,7 @@ registerExactEvmScheme(client, { signer });
 const fetchWithPayment = wrapFetchWithPayment(fetch, client);
 
 const response = await fetchWithPayment(
-  "http://127.0.0.1:3000/analyze",
+  "https://mcp-x402-production.up.railway.app/analyze",
   {
     method: "POST",
     headers: {
