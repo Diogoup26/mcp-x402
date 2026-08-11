@@ -97,15 +97,36 @@ The health endpoint is public and does not require payment:
 curl https://mcp-x402-production.up.railway.app/health
 ```
 
-## Paid End-to-End Test
 
-The following command performs a real x402 payment of $0.01 USDC:
+## Paid End-to-End Tests
+
+Build the project before running a buyer:
+
+```bash
+npm run build
+```
+
+Each command below authorizes an x402 payment of 0.01 USDC on Base Sepolia. Only run one when a paid test is intended.
+
+### HTTP URL Analysis
 
 ```bash
 npm run analyze -- "https://example.com" "Summarize this page."
 ```
 
-Only run this command when a paid test is intended.
+### MCP URL Analysis
+
+```bash
+npm run mcp:analyze -- "https://example.com" "Summarize this page."
+```
+
+### MCP AI Consultation
+
+```bash
+npm run mcp:consult -- "Reply only with: MCP OK"
+```
+
+A successful MCP payment prints `PAGAMENTO MCP: success`, a settlement receipt, and the tool response.
 
 ## Deployment
 
