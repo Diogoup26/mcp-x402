@@ -26,7 +26,7 @@ registerExactEvmScheme(client, { signer });
 const fetchWithPayment = wrapFetchWithPayment(fetch, client);
 
 const response = await fetchWithPayment(
-  "https://mcp-x402-production.up.railway.app/analyze",
+  process.env.ANALYZE_ENDPOINT ?? "https://mcp-x402-production.up.railway.app/analyze",
   {
     method: "POST",
     headers: {

@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { createMcpExpressApp } from "@modelcontextprotocol/express";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { createMcpHandler, McpServer, type ServerContext } from "@modelcontextprotocol/server";
-import { HTTPFacilitatorClient } from "@x402/core/server";
+import { createCdpFacilitatorClient } from "@coinbase/cdp-sdk/x402";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { paymentMiddleware, x402ResourceServer } from "@x402/express";
 import { createPaymentWrapper, type PaymentWrappedHandler } from "@x402/mcp";
@@ -296,7 +296,7 @@ ${page.text}
   };
 }
 
-const facilitatorClient = new HTTPFacilitatorClient({ url: X402_FACILITATOR_URL });
+const facilitatorClient = createCdpFacilitatorClient();
 const paymentServer = new x402ResourceServer(facilitatorClient).register(
   X402_NETWORK,
   new ExactEvmScheme(),

@@ -17,6 +17,7 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@coinbase/cdp-sdk": "^1.55.0",
     "@modelcontextprotocol/express": "^2.0.0",
     "@modelcontextprotocol/node": "^2.0.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
@@ -26,6 +27,7 @@
     "@x402/express": "^2.21.0",
     "@x402/fetch": "^2.21.0",
     "@x402/mcp": "^2.21.0",
+    "@x402/svm": "^2.21.0",
     "cheerio": "^1.2.0",
     "express": "^5.2.1",
     "express-rate-limit": "^8.6.2",
