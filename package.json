@@ -1,0 +1,41 @@
+{
+  "name": "mcp-x402",
+  "version": "1.0.0",
+  "description": "",
+  "main": "dist/server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "tsx src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "analyze": "node --env-file=.env.test ./dist/buyer.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/express": "^2.0.0",
+    "@modelcontextprotocol/node": "^2.0.0",
+    "@modelcontextprotocol/server": "^2.0.0",
+    "@x402/core": "^2.21.0",
+    "@x402/evm": "^2.21.0",
+    "@x402/express": "^2.21.0",
+    "@x402/fetch": "^2.21.0",
+    "@x402/mcp": "^2.21.0",
+    "cheerio": "^1.2.0",
+    "express": "^5.2.1",
+    "openai": "^7.4.0",
+    "viem": "^2.55.13",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.2.0",
+    "tsx": "^4.23.12",
+    "typescript": "^7.0.2"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
+  }
+}
