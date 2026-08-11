@@ -8,15 +8,15 @@ A production-ready Model Context Protocol (MCP) service and HTTP API that provid
 - Health check: `GET /health`
 - MCP endpoint: `POST /mcp`
 - Paid URL analysis: `POST /analyze`
-- Price: `$0.01 USDC` per paid request
+- Price: `$0.05 USDC` per paid request
 - Network: Base Sepolia (`eip155:84532`)
 
 ## MCP Tools
 
 | Tool | Description | Price |
 | --- | --- | --- |
-| `consultar_ia` | Sends a prompt to the OpenAI Responses API. | $0.01 USDC |
-| `analisar_url` | Fetches and analyzes a public HTTP or HTTPS page. | $0.01 USDC |
+| `consultar_ia` | Sends a prompt to the OpenAI Responses API. | $0.02 USDC |
+| `analisar_url` | Fetches and analyzes a public HTTP or HTTPS page. | $0.05 USDC |
 
 ## Technology
 

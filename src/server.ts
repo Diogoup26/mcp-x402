@@ -21,7 +21,8 @@ const MAX_DOWNLOAD_BYTES = 1_500_000;
 const MAX_ANALYSIS_CHARS = 12_000;
 const PAY_TO = "0xAe94Cc8080c9DcAF97Dda998F926ec52AF968d61";
 const X402_NETWORK = "eip155:84532";
-const X402_PRICE = "$0.01";
+const CONSULT_PRICE = "$0.02";
+const ANALYZE_PRICE = "$0.05";
 const X402_FACILITATOR_URL = "https://x402.org/facilitator";
 
 const analyzeUrlInput = z.object({
@@ -303,15 +304,24 @@ const paymentServer = new x402ResourceServer(facilitatorClient).register(
 
 await paymentServer.initialize();
 
-const paidMcpRequirements = await paymentServer.buildPaymentRequirements({
-  scheme: "exact",
-  price: X402_PRICE,
-  network: X402_NETWORK,
-  payTo: PAY_TO,
-});
+const paidConsultRequirements =
+  await paymentServer.buildPaymentRequirements({
+    scheme: "exact",
+    price: CONSULT_PRICE,
+    network: X402_NETWORK,
+    payTo: PAY_TO,
+  });
+
+const paidAnalyzeRequirements =
+  await paymentServer.buildPaymentRequirements({
+    scheme: "exact",
+    price: ANALYZE_PRICE,
+    network: X402_NETWORK,
+    payTo: PAY_TO,
+  });
 
 const paidConsultTool = createPaymentWrapper(paymentServer, {
-  accepts: paidMcpRequirements,
+  accepts: paidConsultRequirements,
   resource: {
     url: "mcp://tool/consultar_ia",
     description: "Consulta paga Ã  OpenAI.",
@@ -321,7 +331,7 @@ const paidConsultTool = createPaymentWrapper(paymentServer, {
 });
 
 const paidAnalyzeUrlTool = createPaymentWrapper(paymentServer, {
-  accepts: paidMcpRequirements,
+  accepts: paidAnalyzeRequirements,
   resource: {
     url: "mcp://tool/analisar_url",
     description: "AnÃ¡lise paga de uma pÃ¡gina web pÃºblica.",
@@ -441,7 +451,7 @@ const requireAnalyzePayment = paymentMiddleware(
     "POST /analyze": {
       accepts: {
         scheme: "exact",
-        price: X402_PRICE,
+        price: ANALYZE_PRICE,
         network: X402_NETWORK,
         payTo: PAY_TO,
       },
@@ -464,12 +474,12 @@ app.get("/health", (_req, res) => {
     paidEndpoint: {
       method: "POST",
       path: "/analyze",
-      price: X402_PRICE,
+      price: ANALYZE_PRICE,
       network: X402_NETWORK,
     },
     paidMcpTools: [
-      { name: "consultar_ia", price: X402_PRICE, network: X402_NETWORK },
-      { name: "analisar_url", price: X402_PRICE, network: X402_NETWORK },
+      { name: "consultar_ia", price: CONSULT_PRICE, network: X402_NETWORK },
+      { name: "analisar_url", price: ANALYZE_PRICE, network: X402_NETWORK },
     ],
   });
 });
@@ -511,6 +521,6 @@ app.listen(PORT, HOST, () => {
   console.log(`MCP ativo em http://${displayHost}:${PORT}/mcp`);
   console.log(`SaÃºde em http://${displayHost}:${PORT}/health`);
   console.log(
-    `AnÃ¡lise x402 em http://${displayHost}:${PORT}/analyze (${X402_PRICE}, Base Sepolia)`,
+    `AnÃ¡lise x402 em http://${displayHost}:${PORT}/analyze (${ANALYZE_PRICE}, Base Sepolia)`,
   );
 });

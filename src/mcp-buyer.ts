@@ -5,7 +5,7 @@ import { privateKeyToAccount } from "viem/accounts";
 
 const MCP_URL = "https://mcp-x402-production.up.railway.app/mcp";
 const NETWORK = "eip155:84532";
-const MAX_PAYMENT = 10_000n;
+const MAX_PAYMENT = 50_000n;
 const USDC_BASE_SEPOLIA =
   "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
 
