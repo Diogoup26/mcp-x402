@@ -346,7 +346,7 @@ const handler = createMcpHandler(() => {
   return server;
 });
 
-const app = createMcpExpressApp({ host: HOST, allowedHosts: ['localhost', '127.0.0.1', process.env.RAILWAY_PUBLIC_DOMAIN ?? 'mcp-x402-production.up.railway.app'] });
+const app = createMcpExpressApp({ host: HOST, allowedHosts: ['localhost', '127.0.0.1', 'healthcheck.railway.app', process.env.RAILWAY_PUBLIC_DOMAIN ?? 'mcp-x402-production.up.railway.app'] });
 app.set('trust proxy', 1);
 app.use(helmet());
 app.use((req, res, next) => {
@@ -447,6 +447,7 @@ app.listen(PORT, HOST, () => {
     `AnÃ¡lise x402 em http://${displayHost}:${PORT}/analyze (${X402_PRICE}, Base Sepolia)`,
   );
 });
+
 
 
 
