@@ -1,4 +1,4 @@
-import { lookup } from "node:dns/promises";
+﻿import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { createMcpExpressApp } from "@modelcontextprotocol/express";
 import { toNodeHandler } from "@modelcontextprotocol/node";
@@ -22,12 +22,12 @@ const X402_PRICE = "$0.01";
 const X402_FACILITATOR_URL = "https://x402.org/facilitator";
 
 const analyzeUrlInput = z.object({
-  url: z.string().url().max(2048).describe("URL público HTTP ou HTTPS"),
+  url: z.string().url().max(2048).describe("URL pÃºblico HTTP ou HTTPS"),
   objetivo: z
     .string()
     .max(500)
     .optional()
-    .describe("Objetivo opcional da análise"),
+    .describe("Objetivo opcional da anÃ¡lise"),
 });
 
 type AnalyzeUrlInput = z.infer<typeof analyzeUrlInput>;
@@ -44,7 +44,7 @@ function getOpenAIClient(): OpenAI {
   const apiKey = process.env.OPENAI_API_KEY;
 
   if (!apiKey) {
-    throw new Error("OPENAI_API_KEY não foi encontrada no ambiente.");
+    throw new Error("OPENAI_API_KEY nÃ£o foi encontrada no ambiente.");
   }
 
   openAIClient ??= new OpenAI({ apiKey, timeout: 120_000 });
@@ -55,7 +55,7 @@ async function askOpenAI(prompt: string): Promise<string> {
   const response = await getOpenAIClient().responses.create({
     model: OPENAI_MODEL,
     instructions:
-      "Responde em português europeu, de forma clara, correta e concisa. Usa apenas os dados fornecidos e não inventes factos. Não reveles raciocínio interno.",
+      "Responde em portuguÃªs europeu, de forma clara, correta e concisa. Usa apenas os dados fornecidos e nÃ£o inventes factos. NÃ£o reveles raciocÃ­nio interno.",
     input: prompt,
   });
 
@@ -106,32 +106,32 @@ function isBlockedIp(address: string): boolean {
 
 async function assertPublicUrl(url: URL): Promise<void> {
   if (!['http:', 'https:'].includes(url.protocol)) {
-    throw new Error("Apenas URLs HTTP ou HTTPS são permitidos.");
+    throw new Error("Apenas URLs HTTP ou HTTPS sÃ£o permitidos.");
   }
 
   if (url.username || url.password) {
-    throw new Error("URLs com utilizador ou palavra-passe não são permitidos.");
+    throw new Error("URLs com utilizador ou palavra-passe nÃ£o sÃ£o permitidos.");
   }
 
   const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
   if (hostname === "localhost" || hostname.endsWith(".localhost") || hostname.endsWith(".local")) {
-    throw new Error("Endereços locais não são permitidos.");
+    throw new Error("EndereÃ§os locais nÃ£o sÃ£o permitidos.");
   }
 
   const addresses = await lookup(hostname, { all: true, verbatim: true });
   if (addresses.length === 0 || addresses.some(({ address }) => isBlockedIp(address))) {
-    throw new Error("O endereço resolve para uma rede privada ou reservada.");
+    throw new Error("O endereÃ§o resolve para uma rede privada ou reservada.");
   }
 }
 
 async function readLimitedText(response: Response): Promise<string> {
   const contentLength = Number(response.headers.get("content-length") ?? 0);
   if (contentLength > MAX_DOWNLOAD_BYTES) {
-    throw new Error("A página excede o limite de 1,5 MB.");
+    throw new Error("A pÃ¡gina excede o limite de 1,5 MB.");
   }
 
   if (!response.body) {
-    throw new Error("A página não devolveu conteúdo.");
+    throw new Error("A pÃ¡gina nÃ£o devolveu conteÃºdo.");
   }
 
   const reader = response.body.getReader();
@@ -145,7 +145,7 @@ async function readLimitedText(response: Response): Promise<string> {
     total += value.byteLength;
     if (total > MAX_DOWNLOAD_BYTES) {
       await reader.cancel();
-      throw new Error("A página excede o limite de 1,5 MB.");
+      throw new Error("A pÃ¡gina excede o limite de 1,5 MB.");
     }
     result += decoder.decode(value, { stream: true });
   }
@@ -159,7 +159,7 @@ async function extractPage(inputUrl: string): Promise<ExtractedPage> {
   try {
     currentUrl = new URL(inputUrl);
   } catch {
-    throw new Error("URL inválido.");
+    throw new Error("URL invÃ¡lido.");
   }
 
   for (let redirect = 0; redirect <= 3; redirect += 1) {
@@ -184,12 +184,12 @@ async function extractPage(inputUrl: string): Promise<ExtractedPage> {
     }
 
     if (!response.ok) {
-      throw new Error(`A página respondeu com HTTP ${response.status}.`);
+      throw new Error(`A pÃ¡gina respondeu com HTTP ${response.status}.`);
     }
 
     const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
     if (!contentType.includes("text/html") && !contentType.includes("text/plain") && !contentType.includes("application/xhtml+xml")) {
-      throw new Error("O endereço não devolveu uma página de texto ou HTML.");
+      throw new Error("O endereÃ§o nÃ£o devolveu uma pÃ¡gina de texto ou HTML.");
     }
 
     const html = await readLimitedText(response);
@@ -205,13 +205,13 @@ async function extractPage(inputUrl: string): Promise<ExtractedPage> {
       .slice(0, MAX_ANALYSIS_CHARS);
 
     if (text.length < 80) {
-      throw new Error("Não foi possível extrair texto suficiente da página.");
+      throw new Error("NÃ£o foi possÃ­vel extrair texto suficiente da pÃ¡gina.");
     }
 
     return { finalUrl: currentUrl.toString(), title, text };
   }
 
-  throw new Error("A página excedeu o limite de três redirecionamentos.");
+  throw new Error("A pÃ¡gina excedeu o limite de trÃªs redirecionamentos.");
 }
 
 async function analyzePage({ url, objetivo }: AnalyzeUrlInput): Promise<{
@@ -221,27 +221,27 @@ async function analyzePage({ url, objetivo }: AnalyzeUrlInput): Promise<{
 }> {
   const page = await extractPage(url);
   const report = await askOpenAI(`
-Analisa o conteúdo abaixo sem usar conhecimentos externos.
+Analisa o conteÃºdo abaixo sem usar conhecimentos externos.
 
 URL final: ${page.finalUrl}
-Título: ${page.title || "Sem título"}
-Objetivo: ${objetivo || "Análise geral"}
+TÃ­tulo: ${page.title || "Sem tÃ­tulo"}
+Objetivo: ${objetivo || "AnÃ¡lise geral"}
 
-Devolve exatamente estas secções:
+Devolve exatamente estas secÃ§Ãµes:
 1. Resumo
 2. Factos principais
-3. Riscos ou limitações
-4. Ações recomendadas
+3. Riscos ou limitaÃ§Ãµes
+4. AÃ§Ãµes recomendadas
 
-Se uma informação não estiver no conteúdo, declara que não foi encontrada.
+Se uma informaÃ§Ã£o nÃ£o estiver no conteÃºdo, declara que nÃ£o foi encontrada.
 
-CONTEÚDO DA PÁGINA:
+CONTEÃšDO DA PÃGINA:
 ${page.text}
 `);
 
   return {
     source: page.finalUrl,
-    title: page.title || "Sem título",
+    title: page.title || "Sem tÃ­tulo",
     report,
   };
 }
@@ -265,7 +265,7 @@ const paidConsultTool = createPaymentWrapper(paymentServer, {
   accepts: paidMcpRequirements,
   resource: {
     url: "mcp://tool/consultar_ia",
-    description: "Consulta paga à OpenAI.",
+    description: "Consulta paga Ã  OpenAI.",
     serviceName: "Diogo AI Service",
     tags: ["ai", "openai"],
   },
@@ -275,7 +275,7 @@ const paidAnalyzeUrlTool = createPaymentWrapper(paymentServer, {
   accepts: paidMcpRequirements,
   resource: {
     url: "mcp://tool/analisar_url",
-    description: "Análise paga de uma página web pública.",
+    description: "AnÃ¡lise paga de uma pÃ¡gina web pÃºblica.",
     serviceName: "Diogo AI Service",
     tags: ["ai", "url-analysis", "research"],
   },
@@ -293,7 +293,7 @@ const handler = createMcpHandler(() => {
       title: "Consultar IA",
       description: "Envia uma pergunta para a OpenAI e devolve a resposta.",
       inputSchema: z.object({
-        prompt: z.string().min(1).max(4000).describe("Pergunta ou instrução para a IA"),
+        prompt: z.string().min(1).max(4000).describe("Pergunta ou instruÃ§Ã£o para a IA"),
       }),
     },
     paidConsultTool(async ({ prompt }) => {
@@ -313,9 +313,9 @@ const handler = createMcpHandler(() => {
   server.registerTool(
     "analisar_url",
     {
-      title: "Analisar página web",
+      title: "Analisar pÃ¡gina web",
       description:
-        "Extrai uma página web pública e produz um relatório com resumo, factos, riscos e ações recomendadas.",
+        "Extrai uma pÃ¡gina web pÃºblica e produz um relatÃ³rio com resumo, factos, riscos e aÃ§Ãµes recomendadas.",
       inputSchema: analyzeUrlInput,
     },
     paidAnalyzeUrlTool(async ({ url, objetivo }) => {
@@ -326,7 +326,7 @@ const handler = createMcpHandler(() => {
           content: [
             {
               type: "text",
-              text: `Fonte: ${analysis.source}\nTítulo: ${analysis.title}\n\n${analysis.report}`,
+              text: `Fonte: ${analysis.source}\nTÃ­tulo: ${analysis.title}\n\n${analysis.report}`,
             },
           ],
         };
@@ -343,7 +343,7 @@ const handler = createMcpHandler(() => {
   return server;
 });
 
-const app = createMcpExpressApp();
+const app = createMcpExpressApp({ host: HOST, allowedHosts: ['localhost', '127.0.0.1', process.env.RAILWAY_PUBLIC_DOMAIN ?? 'mcp-x402-production.up.railway.app'] });
 const nodeHandler = toNodeHandler(handler);
 const requireAnalyzePayment = paymentMiddleware(
   {
@@ -355,7 +355,7 @@ const requireAnalyzePayment = paymentMiddleware(
         payTo: PAY_TO,
       },
       description:
-        "Analisa uma página web pública e devolve resumo, factos, riscos e ações recomendadas.",
+        "Analisa uma pÃ¡gina web pÃºblica e devolve resumo, factos, riscos e aÃ§Ãµes recomendadas.",
       mimeType: "application/json",
       serviceName: "Diogo AI URL Analysis",
       tags: ["ai", "url-analysis", "research"],
@@ -393,7 +393,7 @@ app.post(
     const parsed = analyzeUrlInput.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
-        error: "Pedido inválido.",
+        error: "Pedido invÃ¡lido.",
         details: z.treeifyError(parsed.error),
       });
       return;
@@ -418,8 +418,9 @@ app.post(
 app.listen(PORT, HOST, () => {
   const displayHost = HOST === "0.0.0.0" ? "localhost" : HOST;
   console.log(`MCP ativo em http://${displayHost}:${PORT}/mcp`);
-  console.log(`Saúde em http://${displayHost}:${PORT}/health`);
+  console.log(`SaÃºde em http://${displayHost}:${PORT}/health`);
   console.log(
-    `Análise x402 em http://${displayHost}:${PORT}/analyze (${X402_PRICE}, Base Sepolia)`,
+    `AnÃ¡lise x402 em http://${displayHost}:${PORT}/analyze (${X402_PRICE}, Base Sepolia)`,
   );
 });
+
