@@ -519,8 +519,8 @@ app.post(
 app.listen(PORT, HOST, () => {
   const displayHost = HOST === "0.0.0.0" ? "localhost" : HOST;
   console.log(`MCP ativo em http://${displayHost}:${PORT}/mcp`);
-  console.log(`SaÃƒÂºde em http://${displayHost}:${PORT}/health`);
+  console.log(`Health endpoint: http://${displayHost}:${PORT}/health`);
   console.log(
-    `AnÃƒÂ¡lise x402 em http://${displayHost}:${PORT}/analyze (${ANALYZE_PRICE}, Base mainnet)`,
+    `Analysis x402 endpoint: http://${displayHost}:${PORT}/analyze (${ANALYZE_PRICE}, Base mainnet)`,
   );
 });
