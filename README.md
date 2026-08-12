@@ -11,6 +11,16 @@ A production-ready Model Context Protocol (MCP) service and HTTP API that provid
 - Price: `$0.05 USDC` per paid request
 - Network: Base mainnet (`eip155:8453`)
 
+## Production Status
+
+- Production deployment active on Railway
+- x402 version 2 payment flow
+- Base mainnet payments (`eip155:8453`)
+- Coinbase x402 validation passed
+- Simulation accepted with HTTP 402
+- Bazaar discovery metadata enabled
+- Coinbase index active
+
 ## MCP Tools
 
 | Tool | Description | Price |
