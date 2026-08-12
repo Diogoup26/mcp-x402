@@ -8,6 +8,7 @@ import { createCdpFacilitatorClient } from "@coinbase/cdp-sdk/x402";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { paymentMiddleware, x402ResourceServer } from "@x402/express";
 import { createPaymentWrapper, type PaymentWrappedHandler } from "@x402/mcp";
+import { declareDiscoveryExtension } from '@x402/extensions/bazaar';
 import { load } from "cheerio";
 import OpenAI from "openai";
 import * as z from "zod/v4";
@@ -328,6 +329,19 @@ const paidConsultTool = createPaymentWrapper(paymentServer, {
     serviceName: "Diogo AI Service",
     tags: ["ai", "openai"],
   },
+  extensions: declareDiscoveryExtension({
+    toolName: 'consultar_ia',
+    description: 'Ask the OpenAI model a question and receive a concise answer.',
+    transport: 'streamable-http',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        prompt: { type: 'string', description: 'Question or instruction for the AI.' },
+      },
+      required: ['prompt'],
+      additionalProperties: false,
+    },
+  }),
 });
 
 const paidAnalyzeUrlTool = createPaymentWrapper(paymentServer, {
@@ -338,6 +352,20 @@ const paidAnalyzeUrlTool = createPaymentWrapper(paymentServer, {
     serviceName: "Diogo AI Service",
     tags: ["ai", "url-analysis", "research"],
   },
+  extensions: declareDiscoveryExtension({
+    toolName: 'analisar_url',
+    description: 'Analyze a public web page and return a report with summary, facts, risks and recommended actions.',
+    transport: 'streamable-http',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', format: 'uri', description: 'Public HTTP or HTTPS URL to analyze.' },
+        objetivo: { type: 'string', description: 'Optional analysis objective.' },
+      },
+      required: ['url'],
+      additionalProperties: false,
+    },
+  }),
 });
 
 function adaptPaymentWrapperForMcpV2(
@@ -460,6 +488,31 @@ const requireAnalyzePayment = paymentMiddleware(
       mimeType: "application/json",
       serviceName: "Diogo AI URL Analysis",
       tags: ["ai", "url-analysis", "research"],
+      extensions: {
+        ...declareDiscoveryExtension({
+          bodyType: 'json',
+          input: {
+            url: 'https://example.com',
+            objetivo: 'Summarize this page.',
+          },
+          inputSchema: {
+            type: 'object',
+            properties: {
+              url: { type: 'string', format: 'uri', description: 'Public HTTP or HTTPS URL to analyze.' },
+              objetivo: { type: 'string', description: 'Optional analysis objective.' },
+            },
+            required: ['url'],
+            additionalProperties: false,
+          },
+          output: {
+            example: {
+              source: 'https://example.com/',
+              title: 'Example Domain',
+              report: 'Summary, facts, risks and recommended actions.',
+            },
+          },
+        }),
+      },
     },
   },
   paymentServer,
