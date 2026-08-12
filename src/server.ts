@@ -521,6 +521,6 @@ app.listen(PORT, HOST, () => {
   console.log(`MCP ativo em http://${displayHost}:${PORT}/mcp`);
   console.log(`SaÃƒÂºde em http://${displayHost}:${PORT}/health`);
   console.log(
-    `AnÃƒÂ¡lise x402 em http://${displayHost}:${PORT}/analyze (${ANALYZE_PRICE}, Base Sepolia)`,
+    `AnÃƒÂ¡lise x402 em http://${displayHost}:${PORT}/analyze (${ANALYZE_PRICE}, Base mainnet)`,
   );
 });
