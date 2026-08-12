@@ -544,6 +544,14 @@ app.all("/mcp", (req, res) => {
 app.post(
   "/analyze",
   (req, res, next) => {
+    if (req.get("payment-signature")) {
+      next();
+      return;
+    }
+
+    void requireAnalyzePayment(req, res, next);
+  },
+  (req, res, next) => {
     const parsed = analyzeUrlInput.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
