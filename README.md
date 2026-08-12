@@ -9,7 +9,7 @@ A production-ready Model Context Protocol (MCP) service and HTTP API that provid
 - MCP endpoint: `POST /mcp`
 - Paid URL analysis: `POST /analyze`
 - Price: `$0.05 USDC` per paid request
-- Network: Base Sepolia (`eip155:84532`)
+- Network: Base mainnet (`eip155:8453`)
 
 ## MCP Tools
 
@@ -55,7 +55,7 @@ A production-ready Model Context Protocol (MCP) service and HTTP API that provid
 
 | Variable | Required | Description |
 | --- | --- | --- |
-| `EVM_PRIVATE_KEY` | Yes | Private key of the Base Sepolia buyer wallet. Never commit this value. |
+| `EVM_PRIVATE_KEY` | Yes | Private key of the Base mainnet buyer wallet. Never commit this value. |
 
 Example local `.env.test` file:
 
@@ -106,7 +106,7 @@ Build the project before running a buyer:
 npm run build
 ```
 
-Each command below authorizes an x402 payment of 0.01 USDC on Base Sepolia. Only run one when a paid test is intended.
+The commands below authorize real x402 payments on Base mainnet: 0.02 USDC for `consultar_ia` and 0.05 USDC for `analisar_url`. Only run a command when a real paid request is intended.
 
 ### HTTP URL Analysis
 
