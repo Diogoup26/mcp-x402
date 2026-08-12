@@ -4,10 +4,9 @@ import { createx402MCPClient } from "@x402/mcp";
 import { privateKeyToAccount } from "viem/accounts";
 
 const MCP_URL = "https://mcp-x402-production.up.railway.app/mcp";
-const NETWORK = "eip155:84532";
+const NETWORK = "eip155:8453";
 const MAX_PAYMENT = 50_000n;
-const USDC_BASE_SEPOLIA =
-  "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
+const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 
 type ToolName = "analisar_url" | "consultar_ia";
 
@@ -72,7 +71,7 @@ const client = createx402MCPClient({
         (requirement) =>
           requirement.network === NETWORK &&
           requirement.asset.toLowerCase() ===
-            USDC_BASE_SEPOLIA.toLowerCase() &&
+            USDC_BASE.toLowerCase() &&
           BigInt(requirement.amount) <= MAX_PAYMENT,
       ),
   ],
@@ -82,7 +81,7 @@ const client = createx402MCPClient({
       (requirement) =>
         requirement.network === NETWORK &&
         requirement.asset.toLowerCase() ===
-          USDC_BASE_SEPOLIA.toLowerCase() &&
+          USDC_BASE.toLowerCase() &&
         BigInt(requirement.amount) <= MAX_PAYMENT,
     );
 
