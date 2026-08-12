@@ -1,4 +1,17 @@
 # MCP x402 - Paid AI URL Analysis
+## Pay-per-use AI analysis for agents and applications
+
+Send a public HTTP or HTTPS URL and receive a concise report with a summary, key facts, risks or limitations, and recommended actions.
+
+- **No account or subscription:** payment is made per request with x402.
+- **Transparent price:** `0.05 USDC` per URL analysis on Base mainnet.
+- **Agent-ready:** available through MCP as `analisar_url` and through `POST /analyze`.
+- **Live and validated:** x402 v2, Coinbase validation passed, and Bazaar discovery metadata enabled.
+- **Live endpoint:** `https://mcp-x402-production.up.railway.app/analyze`
+- **Service status:** `https://mcp-x402-production.up.railway.app/health`
+- **Integration help:** open an issue at `https://github.com/Diogoup26/mcp-x402/issues`.
+
+Ideal for AI agents, research automations, content screening, and applications that need webpage analysis without managing their own OpenAI integration.
 
 A production-ready Model Context Protocol (MCP) service and HTTP API that provides paid AI assistance and public URL analysis using the OpenAI Responses API and x402 payments.
 
