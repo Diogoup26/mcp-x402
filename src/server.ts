@@ -722,6 +722,82 @@ const requireAnalyzePayment = paymentMiddleware(
   paymentServer,
 );
 
+const requireVerifyConditionsPayment = paymentMiddleware(
+  {
+    "POST /verify-conditions": {
+      accepts: {
+        scheme: "exact",
+        price: VERIFY_PRICE,
+        network: X402_NETWORK,
+        payTo: PAY_TO,
+      },
+      description:
+        "Verifica se uma página web pública cumpre condições concretas e devolve uma decisão com evidência.",
+      mimeType: "application/json",
+      serviceName: "Diogo AI Condition Verification",
+      tags: ["ai", "verification", "evidence", "web"],
+      extensions: {
+        ...declareDiscoveryExtension({
+          bodyType: "json",
+          input: {
+            url: "https://example.com",
+            condicoes: ["The page identifies the seller."],
+          },
+          inputSchema: {
+            type: "object",
+            properties: {
+              url: {
+                type: "string",
+                format: "uri",
+                description: "Public HTTP or HTTPS URL to verify.",
+              },
+              condicoes: {
+                type: "array",
+                items: {
+                  type: "string",
+                },
+                minItems: 1,
+                maxItems: 10,
+                description:
+                  "Concrete conditions that the page must satisfy.",
+              },
+              contexto: {
+                type: "string",
+                description:
+                  "Optional context for interpreting the conditions.",
+              },
+            },
+            required: ["url", "condicoes"],
+            additionalProperties: false,
+          },
+          output: {
+            example: {
+              source: "https://example.com/",
+              title: "Example Domain",
+              verifiedAt: "2026-08-15T00:00:00.000Z",
+              decisao: {
+                decisao: "confirmado",
+                condicoes: [
+                  {
+                    condicao: "The page identifies the seller.",
+                    estado: "confirmada",
+                    prova: "Example Domain",
+                    explicacao:
+                      "The page explicitly identifies the seller.",
+                  },
+                ],
+                resumo:
+                  "Condition confirmed based on extracted page content.",
+              },
+            },
+          },
+        }),
+      },
+    },
+  },
+  paymentServer,
+);
+
 app.get("/health", (_req, res) => {
   res.json({
     ok: true,
@@ -778,6 +854,49 @@ app.post(
     } catch (error) {
       const message = error instanceof Error ? error.message : "Erro desconhecido";
       res.status(502).json({ error: `Falha ao analisar o URL: ${message}` });
+    }
+  },
+);
+
+app.post(
+  "/verify-conditions",
+  (req, res, next) => {
+    if (req.get("payment-signature")) {
+      next();
+      return;
+    }
+
+    void requireVerifyConditionsPayment(req, res, next);
+  },
+  (req, res, next) => {
+    const parsed = verifyConditionsInput.safeParse(req.body);
+
+    if (!parsed.success) {
+      res.status(400).json({
+        error: "Pedido inválido.",
+        details: z.treeifyError(parsed.error),
+      });
+      return;
+    }
+
+    res.locals.verifyConditionsInput = parsed.data;
+    next();
+  },
+  requireVerifyConditionsPayment,
+  async (_req, res) => {
+    try {
+      const input =
+        res.locals.verifyConditionsInput as VerifyConditionsInput;
+      const verification = await verifyConditions(input);
+      res.json(verification);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Erro desconhecido";
+      res
+        .status(502)
+        .json({
+          error: `Falha ao verificar as condições: ${message}`,
+        });
     }
   },
 );
