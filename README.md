@@ -1,11 +1,11 @@
-# MCP x402 - Paid AI URL Analysis
+# MCP x402 - Paid AI Verification and URL Analysis
 ## Pay-per-use AI analysis for agents and applications
 
 Send a public HTTP or HTTPS URL and receive a concise report with a summary, key facts, risks or limitations, and recommended actions.
 
 - **No account or subscription:** payment is made per request with x402.
-- **Transparent price:** `0.05 USDC` per URL analysis on Base mainnet.
-- **Agent-ready:** available through MCP as `analisar_url` and through `POST /analyze`.
+- **Transparent prices:** $0.02 for `consultar_ia`; $0.05 for `analisar_url` and `verificar_condicoes` on Base mainnet.
+- **Agent-ready:** available through MCP as `consultar_ia`, `analisar_url`, and `verificar_condicoes`.
 - **Live and validated:** x402 v2, Coinbase validation passed, and Bazaar discovery metadata enabled.
 - **Live endpoint:** `https://mcp-x402-production.up.railway.app/analyze`
 - **Service status:** `https://mcp-x402-production.up.railway.app/health`
@@ -36,10 +36,34 @@ A production-ready Model Context Protocol (MCP) service and HTTP API that provid
 
 ## MCP Tools
 
+## Decision verification
+
+### `verificar_condicoes` — $0.05 USDC
+
+A paid decision-verification tool for agents.
+
+Give it a public URL and one or more concrete conditions. It returns a decision based only on evidence extracted from that page:
+
+- `confirmado` — the page clearly proves the condition.
+- `rejeitado` — the page clearly contradicts the condition.
+- `incerto` — the page does not provide enough evidence.
+
+Each result includes the final source URL, page title, verification timestamp, condition-by-condition explanation, and a short quoted proof where available.
+
+Example conditions:
+
+- “The page identifies the seller.”
+- “The product is available in Portugal.”
+- “The page shows a price in euros.”
+- “The document states that the service supports x402.”
+
+This is designed for agents that need an evidence-based decision before taking the next action.
+
 | Tool | Description | Price |
 | --- | --- | --- |
 | `consultar_ia` | Sends a prompt to the OpenAI Responses API. | $0.02 USDC |
 | `analisar_url` | Fetches and analyzes a public HTTP or HTTPS page. | $0.05 USDC |
+| `verificar_condicoes` | Verifies concrete conditions on a public page and returns evidence-based decisions. | $0.05 USDC |
 
 ## Technology
 
