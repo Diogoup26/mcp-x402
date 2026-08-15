@@ -8,12 +8,15 @@ const NETWORK = "eip155:8453";
 const MAX_PAYMENT = 50_000n;
 const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 
-type ToolName = "analisar_url" | "consultar_ia";
+type ToolName =
+  | "analisar_url"
+  | "consultar_ia"
+  | "verificar_condicoes";
 
 const [requestedTool, ...argumentParts] = process.argv.slice(2);
 
 let tool: ToolName;
-let toolArguments: Record<string, string>;
+let toolArguments: Record<string, unknown>;
 
 if (requestedTool === "analisar_url") {
   const [url, ...objectiveParts] = argumentParts;
@@ -40,6 +43,22 @@ if (requestedTool === "analisar_url") {
 
   tool = requestedTool;
   toolArguments = { prompt };
+} else if (requestedTool === "verificar_condicoes") {
+  const [url, ...conditionParts] = argumentParts;
+  const condicao = conditionParts.join(" ").trim();
+
+  if (!url || !condicao) {
+    console.error(
+      'Uso: node --env-file=.env.test .\\dist\\mcp-buyer.js verificar_condicoes <URL> "<condição>"',
+    );
+    process.exit(1);
+  }
+
+  tool = requestedTool;
+  toolArguments = {
+    url,
+    condicoes: [condicao],
+  };
 } else {
   console.error(
     'Ferramenta invalida. Use "analisar_url" ou "consultar_ia".',
