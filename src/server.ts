@@ -24,6 +24,7 @@ const PAY_TO = process.env.X402_PAY_TO ?? "0xAe94Cc8080c9DcAF97Dda998F926ec52AF9
 const X402_NETWORK = (process.env.X402_NETWORK ?? "eip155:84532") as `${string}:${string}`;
 const CONSULT_PRICE = "$0.02";
 const ANALYZE_PRICE = "$0.05";
+const VERIFY_PRICE = "$0.05";
 const X402_FACILITATOR_URL = "https://x402.org/facilitator";
 
 const analyzeUrlInput = z.object({
@@ -34,6 +35,39 @@ const analyzeUrlInput = z.object({
     .optional()
     .describe("Objetivo opcional da análise"),
 });
+
+const verifyConditionsInput = z.object({
+  url: z.string().url().max(2048).describe("URL público HTTP ou HTTPS"),
+  condicoes: z
+    .array(z.string().trim().min(3).max(300))
+    .min(1)
+    .max(10)
+    .describe("Condições concretas que a página tem de cumprir"),
+  contexto: z
+    .string()
+    .trim()
+    .max(500)
+    .optional()
+    .describe("Contexto opcional para interpretar as condições"),
+});
+
+type VerifyConditionsInput = z.infer<typeof verifyConditionsInput>;
+
+const verificationDecisionSchema = z.object({
+  decisao: z.enum(["confirmado", "rejeitado", "incerto"]),
+  condicoes: z.array(
+    z.object({
+      condicao: z.string(),
+      estado: z.enum(["confirmada", "rejeitada", "incerta"]),
+      prova: z.string().nullable(),
+      explicacao: z.string(),
+    }),
+  ),
+  resumo: z.string(),
+});
+
+type VerificationDecision = z.infer<typeof verificationDecisionSchema>;
+
 
 type AnalyzeUrlInput = z.infer<typeof analyzeUrlInput>;
 
@@ -58,7 +92,7 @@ function getOpenAIClient(): OpenAI {
 
 async function askOpenAI(
   prompt: string,
-  operation: "consultar_ia" | "analisar_url",
+  operation: "consultar_ia" | "analisar_url" | "verificar_condicoes",
   maxOutputTokens: number,
 ): Promise<string> {
   const response = await getOpenAIClient().responses.create({
@@ -297,6 +331,84 @@ ${page.text}
   };
 }
 
+async function verifyConditions({
+  url,
+  condicoes,
+  contexto,
+}: VerifyConditionsInput): Promise<{
+  source: string;
+  title: string;
+  verifiedAt: string;
+  decisao: VerificationDecision;
+}> {
+  const page = await extractPage(url);
+  const listaCondicoes = condicoes
+    .map((condicao, index) => `${index + 1}. ${condicao}`)
+    .join("\n");
+
+  const raw = await askOpenAI(
+    `Verifica se uma página web cumpre condições concretas.
+
+URL final: ${page.finalUrl}
+Título: ${page.title || "Sem título"}
+${contexto ? `Contexto: ${contexto}` : ""}
+
+CONDIÇÕES A VERIFICAR:
+${listaCondicoes}
+
+Responde SOMENTE com JSON válido, sem markdown, neste formato:
+{
+  "decisao": "confirmado | rejeitado | incerto",
+  "condicoes": [
+    {
+      "condicao": "texto da condição",
+      "estado": "confirmada | rejeitada | incerta",
+      "prova": "citação curta e exata da página, ou null",
+      "explicacao": "explicação curta baseada apenas na página"
+    }
+  ],
+  "resumo": "conclusão curta"
+}
+
+REGRAS:
+- Usa exclusivamente o conteúdo da página fornecido abaixo.
+- Nunca inventes preço, stock, entrega, composição, identidade do vendedor ou qualquer outro facto.
+- Usa "confirmada" apenas quando a página provar claramente a condição.
+- Usa "rejeitada" apenas quando a página contradisser claramente a condição.
+- Se faltar prova suficiente, usa "incerta" e "prova": null.
+- Devolve uma entrada por cada condição recebida.
+
+CONTEÚDO DA PÁGINA:
+${page.text}`,
+    "verificar_condicoes",
+    1_800,
+  );
+
+  let parsedJson: unknown;
+  try {
+    parsedJson = JSON.parse(raw);
+  } catch {
+    throw new Error("A IA não devolveu uma verificação em JSON válido.");
+  }
+
+  const parsedDecision = verificationDecisionSchema.safeParse(parsedJson);
+  if (!parsedDecision.success) {
+    throw new Error("A IA devolveu uma verificação num formato inválido.");
+  }
+
+  if (parsedDecision.data.condicoes.length !== condicoes.length) {
+    throw new Error("A IA não respondeu a todas as condições pedidas.");
+  }
+
+  return {
+    source: page.finalUrl,
+    title: page.title || "Sem título",
+    verifiedAt: new Date().toISOString(),
+    decisao: parsedDecision.data,
+  };
+}
+
+
 const facilitatorClient = createCdpFacilitatorClient();
 const paymentServer = new x402ResourceServer(facilitatorClient).register(
   X402_NETWORK,
@@ -317,6 +429,14 @@ const paidAnalyzeRequirements =
   await paymentServer.buildPaymentRequirements({
     scheme: "exact",
     price: ANALYZE_PRICE,
+    network: X402_NETWORK,
+    payTo: PAY_TO,
+  });
+
+  const paidVerifyRequirements =
+  await paymentServer.buildPaymentRequirements({
+    scheme: "exact",
+    price: VERIFY_PRICE,
     network: X402_NETWORK,
     payTo: PAY_TO,
   });
@@ -368,6 +488,46 @@ const paidAnalyzeUrlTool = createPaymentWrapper(paymentServer, {
   }),
 });
 
+const paidVerifyConditionsTool = createPaymentWrapper(paymentServer, {
+  accepts: paidVerifyRequirements,
+  resource: {
+    url: "mcp://tool/verificar_condicoes",
+    description:
+      "Verifica se uma página pública cumpre condições concretas e devolve decisão com provas.",
+    serviceName: "Diogo AI Service",
+    tags: ["ai", "verification", "web"],
+  },
+  extensions: declareDiscoveryExtension({
+    toolName: "verificar_condicoes",
+    description:
+      "Verify whether a public web page meets concrete conditions. Returns confirmed, rejected or uncertain with quoted evidence.",
+    transport: "streamable-http",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: {
+          type: "string",
+          format: "uri",
+          description: "Public HTTP or HTTPS URL to verify.",
+        },
+        condicoes: {
+          type: "array",
+          items: { type: "string" },
+          minItems: 1,
+          maxItems: 10,
+          description: "Concrete conditions to verify.",
+        },
+        contexto: {
+          type: "string",
+          description: "Optional context for interpreting the conditions.",
+        },
+      },
+      required: ["url", "condicoes"],
+      additionalProperties: false,
+    },
+  }),
+});
+
 function adaptPaymentWrapperForMcpV2(
   wrapper: ReturnType<typeof createPaymentWrapper>,
 ) {
@@ -388,6 +548,9 @@ const paidConsultToolV2 =
   adaptPaymentWrapperForMcpV2(paidConsultTool);
 const paidAnalyzeUrlToolV2 =
   adaptPaymentWrapperForMcpV2(paidAnalyzeUrlTool);
+
+const paidVerifyConditionsToolV2 =
+  adaptPaymentWrapperForMcpV2(paidVerifyConditionsTool);
 
 const handler = createMcpHandler(() => {
   const server = new McpServer({
@@ -443,6 +606,47 @@ const handler = createMcpHandler(() => {
         return {
           isError: true,
           content: [{ type: "text", text: `Falha ao analisar o URL: ${message}` }],
+        };
+      }
+    }),
+  );
+
+    server.registerTool(
+    "verificar_condicoes",
+    {
+      title: "Verificar condições",
+      description:
+        "Verifica se uma página web pública cumpre condições concretas e devolve decisão confirmada, rejeitada ou incerta com provas textuais.",
+      inputSchema: verifyConditionsInput,
+    },
+    paidVerifyConditionsToolV2(async ({ url, condicoes, contexto }) => {
+      try {
+        const verification = await verifyConditions({
+          url,
+          condicoes,
+          contexto,
+        });
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(verification, null, 2),
+            },
+          ],
+        };
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Erro desconhecido";
+
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: `Falha ao verificar as condições: ${message}`,
+            },
+          ],
         };
       }
     }),
@@ -523,7 +727,7 @@ app.get("/health", (_req, res) => {
     ok: true,
     provider: "openai",
     model: OPENAI_MODEL,
-    tools: ["consultar_ia", "analisar_url"],
+    tools: ["consultar_ia", "analisar_url", "verificar_condicoes"],
     paidEndpoint: {
       method: "POST",
       path: "/analyze",
@@ -533,6 +737,7 @@ app.get("/health", (_req, res) => {
     paidMcpTools: [
       { name: "consultar_ia", price: CONSULT_PRICE, network: X402_NETWORK },
       { name: "analisar_url", price: ANALYZE_PRICE, network: X402_NETWORK },
+      { name: "verificar_condicoes", price: VERIFY_PRICE, network: X402_NETWORK },
     ],
   });
 });
