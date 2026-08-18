@@ -839,6 +839,15 @@ app.get("/.well-known/x402", (_req, res) => {
         description: "Analisa uma página web pública.",
       },
       {
+        path: "/verify-conditions",
+        method: "POST",
+        price: VERIFY_PRICE,
+        network: X402_NETWORK,
+        paymentHeader: "payment-required",
+        description:
+          "Verifica condições concretas numa página web pública e devolve uma decisão com provas.",
+      },  
+        {
         path: "/mcp",
         method: "POST",
         protocol: "Model Context Protocol",
@@ -901,6 +910,62 @@ app.get("/openapi.json", (_req, res) => {
           },
         },
       },
+            "/verify-conditions": {
+        post: {
+          summary: "Verifica condições numa página web",
+          description:
+            "Devolve uma decisão confirmado, rejeitado ou incerto, com prova textual para cada condição.",
+          tags: ["Decision verification", "x402"],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["url", "condicoes"],
+                  properties: {
+                    url: {
+                      type: "string",
+                      format: "uri",
+                      description: "URL pública HTTP ou HTTPS a verificar.",
+                    },
+                    condicoes: {
+                      type: "array",
+                      minItems: 1,
+                      maxItems: 10,
+                      items: { type: "string" },
+                      description:
+                        "Condições concretas que a página deve cumprir.",
+                    },
+                    contexto: {
+                      type: "string",
+                      description:
+                        "Contexto opcional para interpretar as condições.",
+                    },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            "200": {
+              description:
+                "Decisão com estado de cada condição e prova textual quando disponível.",
+            },
+            "400": { description: "Pedido inválido." },
+            "402": {
+              description: "Pagamento x402 necessário.",
+              headers: {
+                "payment-required": {
+                  description: "Condições de pagamento x402.",
+                  schema: { type: "string" },
+                },
+              },
+            },
+            "502": { description: "Falha temporária ao verificar a página." },
+          },
+        },
+      },
       "/mcp": {
         post: {
           summary: "Endpoint Model Context Protocol",
@@ -922,6 +987,7 @@ app.get("/agents.json", (_req, res) => {
       "Serviço MCP/x402 para análise de URLs públicas e consulta de IA.",
     endpoints: {
       mcp: `${PUBLIC_SERVICE_URL}/mcp`,
+      verifyConditions: `${PUBLIC_SERVICE_URL}/verify-conditions`,
       analyze: `${PUBLIC_SERVICE_URL}/analyze`,
       health: `${PUBLIC_SERVICE_URL}/health`,
     },
@@ -951,6 +1017,7 @@ app.get("/llms.txt", (_req, res) => {
 
 - MCP: ${PUBLIC_SERVICE_URL}/mcp
 - Análise paga: POST ${PUBLIC_SERVICE_URL}/analyze
+- Verificação paga: POST ${PUBLIC_SERVICE_URL}/verify-conditions
 - Estado: GET ${PUBLIC_SERVICE_URL}/health
 - Especificação OpenAPI: GET ${PUBLIC_SERVICE_URL}/openapi.json
 
