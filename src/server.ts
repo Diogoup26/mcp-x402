@@ -818,6 +818,157 @@ app.get("/health", (_req, res) => {
   });
 });
 
+const PUBLIC_SERVICE_URL = "https://mcp-x402-production.up.railway.app";
+
+app.get("/.well-known/x402", (_req, res) => {
+  res.json({
+    x402Version: 2,
+    service: {
+      name: "Diogo AI URL Analysis",
+      description:
+        "Análise paga de páginas web públicas com resumo, factos, riscos e ações recomendadas.",
+      url: PUBLIC_SERVICE_URL,
+    },
+    endpoints: [
+      {
+        path: "/analyze",
+        method: "POST",
+        price: ANALYZE_PRICE,
+        network: X402_NETWORK,
+        paymentHeader: "payment-required",
+        description: "Analisa uma página web pública.",
+      },
+      {
+        path: "/mcp",
+        method: "POST",
+        protocol: "Model Context Protocol",
+        description: "Ferramentas MCP pagas para consulta de IA e análise de URLs.",
+      },
+    ],
+  });
+});
+
+app.get("/openapi.json", (_req, res) => {
+  res.json({
+    openapi: "3.1.0",
+    info: {
+      title: "Diogo AI URL Analysis",
+      version: "1.2.0",
+      description:
+        "Serviço x402 para analisar páginas web públicas com IA. O pagamento é exigido através do cabeçalho payment-required.",
+    },
+    servers: [{ url: PUBLIC_SERVICE_URL }],
+    paths: {
+      "/analyze": {
+        post: {
+          summary: "Analisa uma página web pública",
+          tags: ["URL analysis", "x402"],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["url"],
+                  properties: {
+                    url: {
+                      type: "string",
+                      format: "uri",
+                      description: "URL pública HTTP ou HTTPS a analisar.",
+                    },
+                    objetivo: {
+                      type: "string",
+                      description: "Objetivo opcional da análise.",
+                    },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            "200": { description: "Análise concluída." },
+            "400": { description: "Pedido inválido." },
+            "402": {
+              description: "Pagamento x402 necessário.",
+              headers: {
+                "payment-required": {
+                  description: "Condições de pagamento x402.",
+                  schema: { type: "string" },
+                },
+              },
+            },
+            "502": { description: "Falha temporária ao analisar a URL." },
+          },
+        },
+      },
+      "/mcp": {
+        post: {
+          summary: "Endpoint Model Context Protocol",
+          tags: ["MCP"],
+          responses: {
+            "200": { description: "Resposta MCP." },
+          },
+        },
+      },
+    },
+  });
+});
+
+app.get("/agents.json", (_req, res) => {
+  res.json({
+    name: "Diogo AI URL Analysis",
+    version: "1.2.0",
+    description:
+      "Serviço MCP/x402 para análise de URLs públicas e consulta de IA.",
+    endpoints: {
+      mcp: `${PUBLIC_SERVICE_URL}/mcp`,
+      analyze: `${PUBLIC_SERVICE_URL}/analyze`,
+      health: `${PUBLIC_SERVICE_URL}/health`,
+    },
+    payment: {
+      protocol: "x402",
+      network: X402_NETWORK,
+      currency: "USDC",
+      analyzePrice: ANALYZE_PRICE,
+      consultPrice: CONSULT_PRICE,
+    },
+    capabilities: [
+      "Analisar uma URL pública",
+      "Resumir e extrair factos",
+      "Identificar riscos e ações recomendadas",
+      "Consultar IA",
+    ],
+  });
+});
+
+app.get("/llms.txt", (_req, res) => {
+  res.type("text/plain; charset=utf-8").send(
+    `# Diogo AI URL Analysis
+
+> Serviço MCP e x402 para analisar páginas web públicas com IA.
+
+## Endpoints
+
+- MCP: ${PUBLIC_SERVICE_URL}/mcp
+- Análise paga: POST ${PUBLIC_SERVICE_URL}/analyze
+- Estado: GET ${PUBLIC_SERVICE_URL}/health
+- Especificação OpenAPI: GET ${PUBLIC_SERVICE_URL}/openapi.json
+
+## Pagamento
+
+O endpoint /analyze requer pagamento x402 em USDC na rede ${X402_NETWORK}.
+Quando receber HTTP 402, leia o cabeçalho payment-required, efetue o pagamento e repita o mesmo pedido.
+
+## Pedido de exemplo
+
+POST ${PUBLIC_SERVICE_URL}/analyze
+Content-Type: application/json
+
+{"url":"https://example.com","objetivo":"Resumir factos, riscos e ações recomendadas."}
+`
+  );
+});
+
 app.all("/mcp", (req, res) => {
   void nodeHandler(req, res, req.body);
 });
