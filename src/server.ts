@@ -995,6 +995,7 @@ app.get("/agents.json", (_req, res) => {
       protocol: "x402",
       network: X402_NETWORK,
       currency: "USDC",
+      verifyPrice: VERIFY_PRICE,
       analyzePrice: ANALYZE_PRICE,
       consultPrice: CONSULT_PRICE,
     },
@@ -1002,6 +1003,7 @@ app.get("/agents.json", (_req, res) => {
       "Analisar uma URL pública",
       "Resumir e extrair factos",
       "Identificar riscos e ações recomendadas",
+      "Verificar condições com decisão e prova textual",
       "Consultar IA",
     ],
   });
