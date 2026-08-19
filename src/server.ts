@@ -851,7 +851,7 @@ app.get("/.well-known/x402", (_req, res) => {
         network: X402_NETWORK,
         paymentHeader: "payment-required",
         description:
-          "Verifica condições concretas numa página web pública e devolve uma decisão com provas.",
+          "Verifica condições numa página web pública e devolve um recibo auditável: decisão por condição, provas, ID único e hash SHA-256 do conteúdo.",
       },  
         {
         path: "/mcp",
@@ -920,7 +920,7 @@ app.get("/openapi.json", (_req, res) => {
         post: {
           summary: "Verifica condições numa página web",
           description:
-            "Devolve uma decisão confirmado, rejeitado ou incerto, com prova textual para cada condição.",
+            "Devolve um recibo auditável com decisão por condição, prova textual, data/hora, ID único e hash SHA-256 do conteúdo.",
           tags: ["Decision verification", "x402"],
           requestBody: {
             required: true,
@@ -956,7 +956,7 @@ app.get("/openapi.json", (_req, res) => {
           responses: {
             "200": {
               description:
-                "Decisão com estado de cada condição e prova textual quando disponível.",
+                "Recibo auditável: decisão por condição, prova textual quando disponível, verificationId e pageHash SHA-256.",
             },
             "400": { description: "Pedido inválido." },
             "402": {
@@ -990,7 +990,7 @@ app.get("/agents.json", (_req, res) => {
     name: "Diogo AI URL Analysis",
     version: "1.2.0",
     description:
-      "Serviço MCP/x402 para análise de URLs públicas e consulta de IA.",
+      "Serviço MCP/x402 para análise de URLs públicas, consulta de IA e verificação auditável de condições.",
     endpoints: {
       mcp: `${PUBLIC_SERVICE_URL}/mcp`,
       verifyConditions: `${PUBLIC_SERVICE_URL}/verify-conditions`,
@@ -1009,7 +1009,7 @@ app.get("/agents.json", (_req, res) => {
       "Analisar uma URL pública",
       "Resumir e extrair factos",
       "Identificar riscos e ações recomendadas",
-      "Verificar condições com decisão e prova textual",
+      "Verificar condições com recibo auditável, decisão e prova textual",
       "Consultar IA",
     ],
   });
@@ -1019,20 +1019,20 @@ app.get("/llms.txt", (_req, res) => {
   res.type("text/plain; charset=utf-8").send(
     `# Diogo AI URL Analysis
 
-> Serviço MCP e x402 para analisar páginas web públicas com IA.
+> Serviço MCP e x402 para analisar páginas web públicas e verificar condições com recibos auditáveis.
 
 ## Endpoints
 
 - MCP: ${PUBLIC_SERVICE_URL}/mcp
 - Análise paga: POST ${PUBLIC_SERVICE_URL}/analyze
-- Verificação paga: POST ${PUBLIC_SERVICE_URL}/verify-conditions
+- Verificação paga: POST ${PUBLIC_SERVICE_URL}/verify-conditions — decisão por condição, provas, verificationId e pageHash SHA-256
 - Estado: GET ${PUBLIC_SERVICE_URL}/health
 - Especificação OpenAPI: GET ${PUBLIC_SERVICE_URL}/openapi.json
 
 ## Pagamento
 
-O endpoint /analyze requer pagamento x402 em USDC na rede ${X402_NETWORK}.
-Quando receber HTTP 402, leia o cabeçalho payment-required, efetue o pagamento e repita o mesmo pedido.
+Os endpoints /analyze e /verify-conditions requerem pagamento x402 em USDC na rede ${X402_NETWORK}.
+Após receber HTTP 402, lê o cabeçalho payment-required, efetua o pagamento e repete o mesmo pedido.
 
 ## Pedido de exemplo
 
