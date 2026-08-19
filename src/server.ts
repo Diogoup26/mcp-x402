@@ -1,6 +1,6 @@
 ﻿import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createMcpExpressApp } from "@modelcontextprotocol/express";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { createMcpHandler, McpServer, type ServerContext } from "@modelcontextprotocol/server";
@@ -340,8 +340,12 @@ async function verifyConditions({
   title: string;
   verifiedAt: string;
   decisao: VerificationDecision;
+  verificationId: string;
+  pageHash: string;
 }> {
   const page = await extractPage(url);
+  const verificationId = randomUUID();
+  const pageHash = `sha256:${createHash("sha256").update(page.text, "utf8").digest("hex")}`;
   const listaCondicoes = condicoes
     .map((condicao, index) => `${index + 1}. ${condicao}`)
     .join("\n");
@@ -405,6 +409,8 @@ ${page.text}`,
     title: page.title || "Sem título",
     verifiedAt: new Date().toISOString(),
     decisao: parsedDecision.data,
+    verificationId,
+    pageHash,
   };
 }
 
