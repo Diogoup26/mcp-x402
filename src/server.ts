@@ -1045,6 +1045,36 @@ Content-Type: application/json
 });
 
 app.all("/mcp", (req, res) => {
+  const body = req.body as unknown;
+  const bodyKind =
+    body === null ? "null" :
+    Array.isArray(body) ? "array" :
+    typeof body;
+
+  const jsonRpcMethod =
+    body !== null &&
+    typeof body === "object" &&
+    !Array.isArray(body) &&
+    "method" in body &&
+    typeof (body as { method?: unknown }).method === "string"
+      ? (body as { method: string }).method
+      : null;
+
+  res.on("finish", () => {
+    if (res.statusCode < 400) return;
+
+    console.warn(JSON.stringify({
+      timestamp: new Date().toISOString(),
+      event: "mcp_rejection",
+      requestId: res.getHeader("x-request-id") ?? null,
+      status: res.statusCode,
+      contentType: req.get("content-type") ?? null,
+      mcpProtocolVersion: req.get("mcp-protocol-version") ?? null,
+      bodyKind,
+      jsonRpcMethod,
+    }));
+  });
+
   void nodeHandler(req, res, req.body);
 });
 
