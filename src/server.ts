@@ -26,6 +26,12 @@ const CONSULT_PRICE = "$0.02";
 const ANALYZE_PRICE = "$0.05";
 const VERIFY_PRICE = "$0.05";
 const X402_FACILITATOR_URL = "https://x402.org/facilitator";
+const DISCOVERY_PATHS = new Set([
+  "/.well-known/x402",
+  "/openapi.json",
+  "/agents.json",
+  "/llms.txt",
+]);
 
 const analyzeUrlInput = z.object({
   url: z.string().url().max(2048).describe("URL público HTTP ou HTTPS"),
@@ -668,18 +674,36 @@ app.use((req, res, next) => {
   const startedAt = Date.now();
   const requestId = randomUUID();
   res.setHeader('x-request-id', requestId);
-  res.on('finish', () => {
-    console.log(JSON.stringify({
-      timestamp: new Date().toISOString(),
-      level: 'info',
-      event: 'http_request',
-      requestId,
-      method: req.method,
-      path: req.path,
-      status: res.statusCode,
-      durationMs: Date.now() - startedAt,
-    }));
-  });
+  res.on("finish", () => {
+  const isDiscovery = DISCOVERY_PATHS.has(req.path);
+  const isPaidEndpoint =
+    req.path === "/analyze" || req.path === "/verify-conditions";
+  const paymentSignaturePresent = isPaidEndpoint
+    ? Boolean(req.get("payment-signature"))
+    : null;
+
+  const funnelStage =
+    isDiscovery ? "discovery" :
+    req.path === "/mcp" ? "mcp" :
+    isPaidEndpoint && res.statusCode === 402 ? "x402_challenge" :
+    isPaidEndpoint && paymentSignaturePresent && res.statusCode < 400 ? "paid_success" :
+    isPaidEndpoint && paymentSignaturePresent ? "paid_retry_error" :
+    isPaidEndpoint ? "paid_endpoint" :
+    "other";
+
+  console.log(JSON.stringify({
+    timestamp: new Date().toISOString(),
+    level: "info",
+    event: "http_request",
+    requestId,
+    method: req.method,
+    path: req.path,
+    status: res.statusCode,
+    funnelStage,
+    paymentSignaturePresent,
+    durationMs: Date.now() - startedAt,
+  }));
+});
   next();
 });
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, limit: 100, standardHeaders: "draft-8", legacyHeaders: false, message: { error: "Too many requests. Try again later." } }));
