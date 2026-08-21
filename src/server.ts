@@ -828,6 +828,7 @@ const requireVerifyConditionsPayment = paymentMiddleware(
   paymentServer,
 );
 
+
 app.get("/health", (_req, res) => {
   res.json({
     ok: true,
@@ -849,6 +850,35 @@ app.get("/health", (_req, res) => {
 });
 
 const PUBLIC_SERVICE_URL = "https://mcp-x402-production.up.railway.app";
+
+app.get("/", (_req, res) => {
+  res.json({
+    name: "Diogo AI URL Analysis",
+    version: "1.2.0",
+    description:
+      "Serviço MCP/x402 para análise de páginas web e verificação auditável de condições.",
+    discovery: {
+      x402: `${PUBLIC_SERVICE_URL}/.well-known/x402`,
+      openapi: `${PUBLIC_SERVICE_URL}/openapi.json`,
+      agents: `${PUBLIC_SERVICE_URL}/agents.json`,
+      llms: `${PUBLIC_SERVICE_URL}/llms.txt`,
+    },
+    endpoints: {
+      mcp: `${PUBLIC_SERVICE_URL}/mcp`,
+      analyze: `POST ${PUBLIC_SERVICE_URL}/analyze`,
+      verifyConditions: `POST ${PUBLIC_SERVICE_URL}/verify-conditions`,
+      health: `${PUBLIC_SERVICE_URL}/health`,
+    },
+  });
+});
+
+app.get("/robots.txt", (_req, res) => {
+  res.type("text/plain; charset=utf-8").send(
+    `User-agent: *
+Allow: /
+Sitemap: ${PUBLIC_SERVICE_URL}/.well-known/x402`,
+  );
+});
 
 app.get("/.well-known/x402", (_req, res) => {
   res.json({
@@ -885,6 +915,10 @@ app.get("/.well-known/x402", (_req, res) => {
       },
     ],
   });
+});
+
+app.get("/.well-known/x402.json", (_req, res) => {
+  res.redirect(308, "/.well-known/x402");
 });
 
 app.get("/openapi.json", (_req, res) => {
@@ -1087,7 +1121,8 @@ app.all("/mcp", (req, res) => {
   res.on("finish", () => {
     if (res.statusCode < 400) return;
 
-    console.warn(JSON.stringify({
+    console.log(JSON.stringify({
+      level: "warn",
       timestamp: new Date().toISOString(),
       event: "mcp_rejection",
       requestId: res.getHeader("x-request-id") ?? null,
