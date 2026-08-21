@@ -27,6 +27,9 @@ const ANALYZE_PRICE = "$0.05";
 const VERIFY_PRICE = "$0.05";
 const X402_FACILITATOR_URL = "https://x402.org/facilitator";
 const DISCOVERY_PATHS = new Set([
+  "/",
+  "/.well-known/x402.json",
+  "/robots.txt",
   "/.well-known/x402",
   "/openapi.json",
   "/agents.json",
@@ -667,6 +670,25 @@ const handler = createMcpHandler(() => {
   return server;
 });
 
+function getPaidRequestIntent(
+  path: string,
+  body: unknown,
+): "valid_input" | "invalid_or_empty_input" | null {
+  if (path === "/analyze") {
+    return analyzeUrlInput.safeParse(body).success
+      ? "valid_input"
+      : "invalid_or_empty_input";
+  }
+
+  if (path === "/verify-conditions") {
+    return verifyConditionsInput.safeParse(body).success
+      ? "valid_input"
+      : "invalid_or_empty_input";
+  }
+
+  return null;
+}
+
 const app = createMcpExpressApp({ host: HOST, allowedHosts: ['localhost', '127.0.0.1', 'healthcheck.railway.app', process.env.RAILWAY_PUBLIC_DOMAIN ?? 'mcp-x402-production.up.railway.app'] });
 app.set('trust proxy', 1);
 app.use(helmet());
@@ -701,6 +723,9 @@ app.use((req, res, next) => {
     status: res.statusCode,
     funnelStage,
     paymentSignaturePresent,
+    requestIntent: isPaidEndpoint
+  ?   getPaidRequestIntent(req.path, req.body)
+  :   null,
     durationMs: Date.now() - startedAt,
   }));
 });
@@ -905,7 +930,7 @@ app.get("/.well-known/x402", (_req, res) => {
         network: X402_NETWORK,
         paymentHeader: "payment-required",
         description:
-          "Verifica condições numa página web pública e devolve um recibo auditável: decisão por condição, provas, ID único e hash SHA-256 do conteúdo.",
+                  "Verifica condições numa página pública. Após pagamento x402, devolve para cada condição uma decisão confirmada, rejeitada ou incerta, prova textual quando existir, data/hora, verificationId único e hash SHA-256 do conteúdo. Útil para verificar vendedor, produto, política ou afirmação antes de agir.",
       },  
         {
         path: "/mcp",
