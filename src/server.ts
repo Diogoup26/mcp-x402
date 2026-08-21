@@ -670,20 +670,80 @@ const handler = createMcpHandler(() => {
   return server;
 });
 
+type PaidRequestIntent =
+  | "valid_input"
+  | "invalid_input"
+  | "empty_input"
+  | "wrong_method"
+  | null;
+
 function getPaidRequestIntent(
+  method: string,
   path: string,
   body: unknown,
-): "valid_input" | "invalid_or_empty_input" | null {
+): PaidRequestIntent {
+  const isPaidEndpoint =
+    path === "/analyze" || path === "/verify-conditions";
+
+  if (!isPaidEndpoint) {
+    return null;
+  }
+
+  if (method !== "POST") {
+    return "wrong_method";
+  }
+
+  if (
+    body === null ||
+    typeof body !== "object" ||
+    Array.isArray(body) ||
+    Object.keys(body).length === 0
+  ) {
+    return "empty_input";
+  }
+
+  const isValid =
+    path === "/analyze"
+      ? analyzeUrlInput.safeParse(body).success
+      : verifyConditionsInput.safeParse(body).success;
+
+  return isValid ? "valid_input" : "invalid_input";
+}
+
+function getPaidRequestDetail(
+  path: string,
+  body: unknown,
+): string | null {
   if (path === "/analyze") {
-    return analyzeUrlInput.safeParse(body).success
-      ? "valid_input"
-      : "invalid_or_empty_input";
+    const parsed = analyzeUrlInput.safeParse(body);
+
+    if (!parsed.success) {
+      return null;
+    }
+
+    return parsed.data.objetivo
+      ? "url_with_objective"
+      : "url_only";
   }
 
   if (path === "/verify-conditions") {
-    return verifyConditionsInput.safeParse(body).success
-      ? "valid_input"
-      : "invalid_or_empty_input";
+    const parsed = verifyConditionsInput.safeParse(body);
+
+    if (!parsed.success) {
+      return null;
+    }
+
+    const count = parsed.data.condicoes.length;
+    const conditionBucket =
+      count === 1
+        ? "one_condition"
+        : count <= 3
+          ? "two_to_three_conditions"
+          : "four_to_ten_conditions";
+
+    return parsed.data.contexto
+      ? `${conditionBucket}_with_context`
+      : conditionBucket;
   }
 
   return null;
@@ -723,9 +783,8 @@ app.use((req, res, next) => {
     status: res.statusCode,
     funnelStage,
     paymentSignaturePresent,
-    requestIntent: isPaidEndpoint
-  ?   getPaidRequestIntent(req.path, req.body)
-  :   null,
+    requestIntent: getPaidRequestIntent(req.method, req.path, req.body),
+    requestIntentDetail: getPaidRequestDetail(req.path, req.body),
     durationMs: Date.now() - startedAt,
   }));
 });
@@ -743,7 +802,7 @@ const requireAnalyzePayment = paymentMiddleware(
         payTo: PAY_TO,
       },
       description:
-        "Analisa uma página web pública e devolve resumo, factos, riscos e ações recomendadas.",
+        "Payment required. Send a valid JSON body. After HTTP 402, read payment-required, authorize the stated USDC payment on Base, then repeat the identical POST request. Returns summary, facts, risks and recommended actions.",
       mimeType: "application/json",
       serviceName: "Diogo AI URL Analysis",
       tags: ["ai", "url-analysis", "research"],
@@ -787,7 +846,7 @@ const requireVerifyConditionsPayment = paymentMiddleware(
         payTo: PAY_TO,
       },
       description:
-        "Verifica se uma página web pública cumpre condições concretas e devolve uma decisão com evidência.",
+            "Payment required. Send a valid JSON body with url and 1 to 10 conditions. After HTTP 402, read payment-required, authorize the stated USDC payment on Base, then repeat the identical POST request. Returns a decision per condition, textual evidence when available, verificationId and SHA-256 page hash.",
       mimeType: "application/json",
       serviceName: "Diogo AI Condition Verification",
       tags: ["ai", "verification", "evidence", "web"],
