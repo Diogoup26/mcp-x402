@@ -598,7 +598,7 @@ const paidVerifyConditionsToolV2 =
 const handler = createMcpHandler(() => {
   const server = new McpServer({
     name: "diogo-ai-service",
-    version: "1.2.0",
+    version: "1.2.1",
   });
 
   server.registerTool(
@@ -1203,7 +1203,7 @@ const requireAnalyzePayment = paymentMiddleware(
       description:
         "Payment required. Send a valid JSON body. After HTTP 402, read payment-required, authorize the stated USDC payment on Base, then repeat the identical POST request. Returns summary, facts, risks and recommended actions.",
       mimeType: "application/json",
-      serviceName: "Diogo AI URL Analysis",
+      serviceName: "MCP x402 - Evidence-Backed Web Verification",
       tags: ["ai", "url-analysis", "research"],
       extensions: {
         ...declareDiscoveryExtension({
@@ -1336,10 +1336,10 @@ const PUBLIC_SERVICE_URL = "https://mcp-x402-production.up.railway.app";
 
 app.get("/", (_req, res) => {
   res.json({
-    name: "Diogo AI URL Analysis",
-    version: "1.2.0",
+    name: "MCP x402 - Evidence-Backed Web Verification",
+    version: "1.2.1",
     description:
-     "EN: MCP/x402 service for public web-page analysis and auditable condition verification. PT: Serviço MCP/x402 para análise de páginas web e verificação auditável de condições.",
+     "PT: Verificação baseada em evidência para agentes de IA antes de tomarem decisões sobre vendedores, produtos, ofertas, políticas ou afirmações. PT: Serviço MCP/x402 para análise de páginas web e verificação auditável de condições.",
     discovery: {
       x402: `${PUBLIC_SERVICE_URL}/.well-known/x402`,
       openapi: `${PUBLIC_SERVICE_URL}/openapi.json`,
@@ -1370,9 +1370,9 @@ app.get("/.well-known/x402", (_req, res) => {
   res.json({
     x402Version: 2,
     service: {
-      name: "Diogo AI URL Analysis",
+      name: "MCP x402 - Evidence-Backed Web Verification",
       description:
-        "Análise paga de páginas web públicas com resumo, factos, riscos e ações recomendadas.",
+        "EN: Evidence-backed verification for AI agents before acting on sellers, products, offers, policies, or claims. PT: Verificação baseada em evidência para agentes de IA antes de agirem sobre vendedores, produtos, ofertas, políticas ou afirmações.",
       url: PUBLIC_SERVICE_URL,
     },
     endpoints: [
@@ -1382,7 +1382,7 @@ app.get("/.well-known/x402", (_req, res) => {
         price: ANALYZE_PRICE,
         network: X402_NETWORK,
         paymentHeader: "payment-required",
-        description: "Analisa uma página web pública.",
+        description: "EN: Analyze a public web page and return a structured report with summary, facts, risks, and recommended actions. PT: Analisa uma página pública e devolve um relatório estruturado com resumo, factos, riscos e ações recomendadas.",
       },
       {
         path: "/verify-conditions",
@@ -1391,13 +1391,13 @@ app.get("/.well-known/x402", (_req, res) => {
         network: X402_NETWORK,
         paymentHeader: "payment-required",
         description:
-                  "Verifica condições numa página pública. Após pagamento x402, devolve para cada condição uma decisão confirmada, rejeitada ou incerta, prova textual quando existir, data/hora, verificationId único e hash SHA-256 do conteúdo. Útil para verificar vendedor, produto, política ou afirmação antes de agir.",
-      },  
+                  "EN: Verify 1 to 10 conditions about a seller, product, offer, policy, or claim before an AI agent acts. Returns a confirmed, rejected, or uncertain decision for every condition, supporting evidence when available, verificationId, and SHA-256 pageHash. PT: Verifica entre 1 e 10 condições antes de um agente de IA agir e devolve decisão e evidência auditável por condição.",
+        },
         {
         path: "/mcp",
         method: "POST",
         protocol: "Model Context Protocol",
-        description: "Ferramentas MCP pagas para consulta de IA e análise de URLs.",
+        description: "EN: MCP tools for evidence-backed verification, paid public URL analysis, and AI consultation. PT: Ferramentas MCP para verificação baseada em evidência, análise paga de URLs públicas e consulta de IA.",
       },
     ],
   });
@@ -1411,8 +1411,8 @@ app.get("/openapi.json", (_req, res) => {
   res.json({
     openapi: "3.1.0",
     info: {
-      title: "Diogo AI URL Analysis",
-      version: "1.2.0",
+      title: "MCP x402 - Evidence-Backed Web Verification",
+      version: "1.2.1",
       description:
         "EN: x402 service for AI analysis of public web pages and auditable condition verification. Payment instructions are returned through the payment-required header. PT: Serviço x402 para análise com IA de páginas web públicas e verificação auditável de condições. As instruções de pagamento são devolvidas no cabeçalho payment-required.",
         "x-supported-languages": ["en", "pt-PT"],
@@ -1627,8 +1627,8 @@ app.get("/openapi.json", (_req, res) => {
 
 app.get("/agents.json", (_req, res) => {
   res.json({
-    name: "Diogo AI URL Analysis",
-    version: "1.2.0",
+    name: "MCP x402 - Evidence-Backed Web Verification",
+    version: "1.2.1",
     description:
      "EN: MCP/x402 service for public URL analysis, AI consultation and auditable condition verification. PT: Serviço MCP/x402 para análise de URLs públicas, consulta de IA e verificação auditável de condições.",
     languages: {
@@ -1665,7 +1665,7 @@ app.get("/agents.json", (_req, res) => {
 
 app.get("/llms.txt", (_req, res) => {
   res.type("text/plain; charset=utf-8").send(
-    `# Diogo AI URL Analysis
+    `# MCP x402 - Evidence-Backed Web Verification
 
 > EN: MCP/x402 service for analyzing public web pages and verifying conditions with auditable receipts.
 > PT: Serviço MCP e x402 para analisar páginas web públicas e verificar condições com recibos auditáveis.
