@@ -681,7 +681,74 @@ type PaidRequestIntent =
   | "empty_input"
   | "wrong_method"
   | null;
+function getDiagnosticTargetPath(
+  path: string,
+): "/analyze" | "/verify-conditions" | null {
+  if (path === "/analyze" || path === "/preflight/analyze") {
+    return "/analyze";
+  }
 
+  if (
+    path === "/verify-conditions" ||
+    path === "/preflight/verify-conditions"
+  ) {
+    return "/verify-conditions";
+  }
+
+  return null;
+}
+
+function getRequestBodyKind(body: unknown): string {
+  if (body === null) {
+    return "null";
+  }
+
+  if (Array.isArray(body)) {
+    return "array";
+  }
+
+  return typeof body;
+}
+
+function getSafeBodyKeys(body: unknown): string[] | null {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    return null;
+  }
+
+  return Object.keys(body)
+    .sort()
+    .slice(0, 20)
+    .map((key) => {
+      const sanitized = key
+        .replace(/[^a-zA-Z0-9_-]/g, "?")
+        .slice(0, 40);
+
+      return sanitized || "<empty-key>";
+    });
+}
+
+function getValidationIssues(
+  path: "/analyze" | "/verify-conditions",
+  body: unknown,
+): string[] {
+  const result =
+    path === "/analyze"
+      ? analyzeUrlInput.safeParse(body)
+      : verifyConditionsInput.safeParse(body);
+
+  if (result.success) {
+    return [];
+  }
+
+  return result.error.issues.slice(0, 20).map((issue) => {
+    const issuePath =
+      issue.path.length > 0
+        ? issue.path.map((part) => String(part)).join(".")
+        : "body";
+
+    return `${issuePath}:${issue.code}`;
+  });
+}
 function getPaidRequestIntent(
   method: string,
   path: string,
@@ -766,6 +833,7 @@ app.use((req, res, next) => {
   const isPaidEndpoint =
     req.path === "/analyze" || req.path === "/verify-conditions";
   const isPreflightEndpoint = PREFLIGHT_PATHS.has(req.path);
+  const diagnosticTargetPath = getDiagnosticTargetPath(req.path);
   const paymentSignaturePresent = isPaidEndpoint
     ? Boolean(req.get("payment-signature"))
     : null;
@@ -790,9 +858,28 @@ app.use((req, res, next) => {
     path: req.path,
     status: res.statusCode,
     funnelStage,
-    paymentSignaturePresent,
-    requestIntent: getPaidRequestIntent(req.method, req.path, req.body),
-    requestIntentDetail: getPaidRequestDetail(req.path, req.body),
+    userAgent: req.get("user-agent")?.slice(0, 300) ?? null,
+contentType: req.get("content-type")?.slice(0, 120) ?? null,
+paymentSignaturePresent,
+bodyKind: diagnosticTargetPath
+  ? getRequestBodyKind(req.body)
+  : null,
+bodyKeys: diagnosticTargetPath
+  ? getSafeBodyKeys(req.body)
+  : null,
+validationIssues: diagnosticTargetPath
+  ? getValidationIssues(diagnosticTargetPath, req.body)
+  : null,
+requestIntent: diagnosticTargetPath
+  ? getPaidRequestIntent(
+      req.method,
+      diagnosticTargetPath,
+      req.body,
+    )
+  : null,
+requestIntentDetail: diagnosticTargetPath
+  ? getPaidRequestDetail(diagnosticTargetPath, req.body)
+  : null,
     durationMs: Date.now() - startedAt,
   }));
 });
