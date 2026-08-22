@@ -1394,11 +1394,23 @@ app.post("/preflight/analyze", (req, res) => {
 
   if (!parsed.success) {
     res.status(400).json({
-      ready: false,
-      target: "/analyze",
-      reason: "invalid_input",
-      details: z.treeifyError(parsed.error),
-    });
+  ready: false,
+  target: "/analyze",
+  reason: "invalid_input",
+  message:
+    "Send application/json with a public HTTP(S) url. The objetivo field is optional.",
+  messagePt:
+    "Envie application/json com um URL público HTTP(S). O campo objetivo é opcional.",
+  required: ["url"],
+  optional: ["objetivo"],
+  example: {
+    url: "https://example.com",
+    objetivo: "Summarize the page",
+  },
+  nextStep:
+    "Correct the JSON and repeat this free preflight POST. When ready is true, send the identical body to /analyze.",
+  details: z.treeifyError(parsed.error),
+});
     return;
   }
 
@@ -1438,11 +1450,24 @@ app.post("/preflight/verify-conditions", (req, res) => {
 
   if (!parsed.success) {
     res.status(400).json({
-      ready: false,
-      target: "/verify-conditions",
-      reason: "invalid_input",
-      details: z.treeifyError(parsed.error),
-    });
+  ready: false,
+  target: "/verify-conditions",
+  reason: "invalid_input",
+  message:
+    "Send application/json with a public HTTP(S) url and condicoes containing 1 to 10 strings. The contexto field is optional.",
+  messagePt:
+    "Envie application/json com um URL público HTTP(S) e condicoes contendo entre 1 e 10 textos. O campo contexto é opcional.",
+  required: ["url", "condicoes"],
+  optional: ["contexto"],
+  example: {
+    url: "https://example.com",
+    condicoes: ["The page identifies the seller"],
+    contexto: "Pre-purchase verification",
+  },
+  nextStep:
+    "Correct the JSON and repeat this free preflight POST. When ready is true, send the identical body to /verify-conditions.",
+  details: z.treeifyError(parsed.error),
+});
     return;
   }
 
@@ -1522,9 +1547,22 @@ app.post(
     const parsed = analyzeUrlInput.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
-        error: "Pedido inválido.",
-        details: z.treeifyError(parsed.error),
-      });
+  error: "invalid_input",
+  message:
+    "Send application/json with a public HTTP(S) url. The objetivo field is optional.",
+  messagePt:
+    "Envie application/json com um URL público HTTP(S). O campo objetivo é opcional.",
+  required: ["url"],
+  optional: ["objetivo"],
+  example: {
+    url: "https://example.com",
+    objetivo: "Summarize the page",
+  },
+  preflight: `${PUBLIC_SERVICE_URL}/preflight/analyze`,
+  nextStep:
+    "Correct the JSON, validate it using the free preflight endpoint, then repeat this POST.",
+  details: z.treeifyError(parsed.error),
+});
       return;
     }
 
@@ -1551,9 +1589,23 @@ app.post(
 
     if (!parsed.success) {
       res.status(400).json({
-        error: "Pedido inválido.",
-        details: z.treeifyError(parsed.error),
-      });
+  error: "invalid_input",
+  message:
+    "Send application/json with a public HTTP(S) url and condicoes containing 1 to 10 strings. The contexto field is optional.",
+  messagePt:
+    "Envie application/json com um URL público HTTP(S) e condicoes contendo entre 1 e 10 textos. O campo contexto é opcional.",
+  required: ["url", "condicoes"],
+  optional: ["contexto"],
+  example: {
+    url: "https://example.com",
+    condicoes: ["The page identifies the seller"],
+    contexto: "Pre-purchase verification",
+  },
+  preflight: `${PUBLIC_SERVICE_URL}/preflight/verify-conditions`,
+  nextStep:
+    "Correct the JSON, validate it using the free preflight endpoint, then repeat this POST.",
+  details: z.treeifyError(parsed.error),
+});
       return;
     }
 
