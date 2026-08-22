@@ -36,6 +36,11 @@ const DISCOVERY_PATHS = new Set([
   "/llms.txt",
 ]);
 
+const PREFLIGHT_PATHS = new Set([
+  "/preflight/analyze",
+  "/preflight/verify-conditions",
+]);
+
 const analyzeUrlInput = z.object({
   url: z.string().url().max(2048).describe("URL público HTTP ou HTTPS"),
   objetivo: z
@@ -760,12 +765,15 @@ app.use((req, res, next) => {
   const isDiscovery = DISCOVERY_PATHS.has(req.path);
   const isPaidEndpoint =
     req.path === "/analyze" || req.path === "/verify-conditions";
+  const isPreflightEndpoint = PREFLIGHT_PATHS.has(req.path);
   const paymentSignaturePresent = isPaidEndpoint
     ? Boolean(req.get("payment-signature"))
     : null;
 
   const funnelStage =
     isDiscovery ? "discovery" :
+    isPreflightEndpoint && res.statusCode < 400 ? "preflight_ready" :
+    isPreflightEndpoint ? "preflight_invalid" :
     req.path === "/mcp" ? "mcp" :
     isPaidEndpoint && res.statusCode === 402 ? "x402_challenge" :
     isPaidEndpoint && paymentSignaturePresent && res.statusCode < 400 ? "paid_success" :
@@ -940,7 +948,7 @@ app.get("/", (_req, res) => {
     name: "Diogo AI URL Analysis",
     version: "1.2.0",
     description:
-      "Serviço MCP/x402 para análise de páginas web e verificação auditável de condições.",
+     "EN: MCP/x402 service for public web-page analysis and auditable condition verification. PT: Serviço MCP/x402 para análise de páginas web e verificação auditável de condições.",
     discovery: {
       x402: `${PUBLIC_SERVICE_URL}/.well-known/x402`,
       openapi: `${PUBLIC_SERVICE_URL}/openapi.json`,
@@ -951,6 +959,8 @@ app.get("/", (_req, res) => {
       mcp: `${PUBLIC_SERVICE_URL}/mcp`,
       analyze: `POST ${PUBLIC_SERVICE_URL}/analyze`,
       verifyConditions: `POST ${PUBLIC_SERVICE_URL}/verify-conditions`,
+      preflightAnalyze: `POST ${PUBLIC_SERVICE_URL}/preflight/analyze`,
+      preflightVerifyConditions: `POST ${PUBLIC_SERVICE_URL}/preflight/verify-conditions`,
       health: `${PUBLIC_SERVICE_URL}/health`,
     },
   });
@@ -1012,7 +1022,8 @@ app.get("/openapi.json", (_req, res) => {
       title: "Diogo AI URL Analysis",
       version: "1.2.0",
       description:
-        "Serviço x402 para analisar páginas web públicas com IA. O pagamento é exigido através do cabeçalho payment-required.",
+        "EN: x402 service for AI analysis of public web pages and auditable condition verification. Payment instructions are returned through the payment-required header. PT: Serviço x402 para análise com IA de páginas web públicas e verificação auditável de condições. As instruções de pagamento são devolvidas no cabeçalho payment-required.",
+        "x-supported-languages": ["en", "pt-PT"],
     },
     servers: [{ url: PUBLIC_SERVICE_URL }],
     paths: {
@@ -1114,6 +1125,101 @@ app.get("/openapi.json", (_req, res) => {
           },
         },
       },
+           "/preflight/analyze": {
+        post: {
+          summary: "Valida gratuitamente um pedido de análise",
+          description:
+            "Não cobra, não descarrega a página e não executa IA. Confirma o JSON e devolve preço, rede, destino pago, próximo passo e estrutura prevista do resultado.",
+          tags: ["Preflight", "URL analysis"],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["url"],
+                  properties: {
+                    url: {
+                      type: "string",
+                      format: "uri",
+                      description: "URL pública HTTP ou HTTPS a analisar.",
+                    },
+                    objetivo: {
+                      type: "string",
+                      description: "Objetivo opcional da análise.",
+                    },
+                  },
+                },
+                example: {
+                  url: "https://example.com",
+                  objetivo: "Resumir factos, riscos e ações recomendadas.",
+                },
+              },
+            },
+          },
+          responses: {
+            "200": {
+              description:
+                "JSON válido. Devolve preço, rede, endpoint pago, próximo passo e resultado previsto.",
+            },
+            "400": {
+              description: "JSON inválido; devolve os campos a corrigir.",
+            },
+          },
+        },
+      },
+            "/preflight/verify-conditions": {
+        post: {
+          summary: "Valida gratuitamente um pedido de verificação",
+          description:
+            "Não cobra, não descarrega a página e não executa IA. Confirma a URL e entre 1 e 10 condições, devolvendo preço, rede, destino pago, próximo passo e estrutura prevista do recibo.",
+          tags: ["Preflight", "Decision verification"],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["url", "condicoes"],
+                  properties: {
+                    url: {
+                      type: "string",
+                      format: "uri",
+                      description: "URL pública HTTP ou HTTPS a verificar.",
+                    },
+                    condicoes: {
+                      type: "array",
+                      minItems: 1,
+                      maxItems: 10,
+                      items: { type: "string" },
+                      description: "Condições concretas que a página deve cumprir.",
+                    },
+                    contexto: {
+                      type: "string",
+                      description:
+                        "Contexto opcional para interpretar as condições.",
+                    },
+                  },
+                },
+                example: {
+                  url: "https://example.com",
+                  condicoes: ["A página identifica o vendedor."],
+                  contexto: "Avaliação antes de uma compra.",
+                },
+              },
+            },
+          },
+          responses: {
+            "200": {
+              description:
+                "JSON válido. Devolve preço, rede, endpoint pago, próximo passo e campos previstos do recibo.",
+            },
+            "400": {
+              description: "JSON inválido; devolve os campos a corrigir.",
+            },
+          },
+        },
+      },
       "/mcp": {
         post: {
           summary: "Endpoint Model Context Protocol",
@@ -1132,11 +1238,18 @@ app.get("/agents.json", (_req, res) => {
     name: "Diogo AI URL Analysis",
     version: "1.2.0",
     description:
-      "Serviço MCP/x402 para análise de URLs públicas, consulta de IA e verificação auditável de condições.",
+     "EN: MCP/x402 service for public URL analysis, AI consultation and auditable condition verification. PT: Serviço MCP/x402 para análise de URLs públicas, consulta de IA e verificação auditável de condições.",
+    languages: {
+     documentation: ["en", "pt-PT"],
+     responseBehavior:
+      "Natural-language output is returned in the same language as the request.",
+},
     endpoints: {
       mcp: `${PUBLIC_SERVICE_URL}/mcp`,
       verifyConditions: `${PUBLIC_SERVICE_URL}/verify-conditions`,
       analyze: `${PUBLIC_SERVICE_URL}/analyze`,
+      preflightAnalyze: `${PUBLIC_SERVICE_URL}/preflight/analyze`,
+      preflightVerifyConditions: `${PUBLIC_SERVICE_URL}/preflight/verify-conditions`,
       health: `${PUBLIC_SERVICE_URL}/health`,
     },
     payment: {
@@ -1161,13 +1274,16 @@ app.get("/llms.txt", (_req, res) => {
   res.type("text/plain; charset=utf-8").send(
     `# Diogo AI URL Analysis
 
-> Serviço MCP e x402 para analisar páginas web públicas e verificar condições com recibos auditáveis.
+> EN: MCP/x402 service for analyzing public web pages and verifying conditions with auditable receipts.
+> PT: Serviço MCP e x402 para analisar páginas web públicas e verificar condições com recibos auditáveis.
 
 ## Endpoints
 
 - MCP: ${PUBLIC_SERVICE_URL}/mcp
 - Análise paga: POST ${PUBLIC_SERVICE_URL}/analyze
 - Verificação paga: POST ${PUBLIC_SERVICE_URL}/verify-conditions — decisão por condição, provas, verificationId e pageHash SHA-256
+- Pré-validação gratuita da análise: POST ${PUBLIC_SERVICE_URL}/preflight/analyze — valida o JSON, informa preço e explica o próximo passo sem cobrar
+- Pré-validação gratuita da verificação: POST ${PUBLIC_SERVICE_URL}/preflight/verify-conditions — valida URL e condições, informa preço e explica o próximo passo sem cobrar
 - Estado: GET ${PUBLIC_SERVICE_URL}/health
 - Especificação OpenAPI: GET ${PUBLIC_SERVICE_URL}/openapi.json
 
@@ -1184,6 +1300,98 @@ Content-Type: application/json
 {"url":"https://example.com","objetivo":"Resumir factos, riscos e ações recomendadas."}
 `
   );
+});
+
+app.post("/preflight/analyze", (req, res) => {
+  const parsed = analyzeUrlInput.safeParse(req.body);
+
+  if (!parsed.success) {
+    res.status(400).json({
+      ready: false,
+      target: "/analyze",
+      reason: "invalid_input",
+      details: z.treeifyError(parsed.error),
+    });
+    return;
+  }
+
+  res.json({
+    ready: true,
+    target: {
+      method: "POST",
+      path: "/analyze",
+      url: `${PUBLIC_SERVICE_URL}/analyze`,
+    },
+    validated: {
+      operation: "analyze",
+      objectiveProvided: Boolean(parsed.data.objetivo),
+    },
+    payment: {
+      protocol: "x402",
+      network: X402_NETWORK,
+      currency: "USDC",
+      price: ANALYZE_PRICE,
+      nextStep:
+        "Send the identical JSON body to /analyze. On HTTP 402, read payment-required, authorize the payment, then repeat the identical POST with the x402 payment signature.",
+    },
+    output: {
+      fields: ["source", "title", "report"],
+      reportSections: [
+        "Summary",
+        "Main facts",
+        "Risks or limitations",
+        "Recommended actions",
+      ],
+    },
+  });
+});
+
+app.post("/preflight/verify-conditions", (req, res) => {
+  const parsed = verifyConditionsInput.safeParse(req.body);
+
+  if (!parsed.success) {
+    res.status(400).json({
+      ready: false,
+      target: "/verify-conditions",
+      reason: "invalid_input",
+      details: z.treeifyError(parsed.error),
+    });
+    return;
+  }
+
+  res.json({
+    ready: true,
+    target: {
+      method: "POST",
+      path: "/verify-conditions",
+      url: `${PUBLIC_SERVICE_URL}/verify-conditions`,
+    },
+    validated: {
+      operation: "verify-conditions",
+      conditionsCount: parsed.data.condicoes.length,
+      contextProvided: Boolean(parsed.data.contexto),
+    },
+    payment: {
+      protocol: "x402",
+      network: X402_NETWORK,
+      currency: "USDC",
+      price: VERIFY_PRICE,
+      nextStep:
+        "Send the identical JSON body to /verify-conditions. On HTTP 402, read payment-required, authorize the payment, then repeat the identical POST with the x402 payment signature.",
+    },
+    output: {
+      fields: [
+        "source",
+        "title",
+        "verifiedAt",
+        "decisao",
+        "verificationId",
+        "pageHash",
+      ],
+      decisionValues: ["confirmado", "rejeitado", "incerto"],
+      includesEvidencePerCondition: true,
+    },
+  });
 });
 
 app.all("/mcp", (req, res) => {
