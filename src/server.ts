@@ -13,6 +13,7 @@ import { load } from "cheerio";
 import OpenAI from "openai";
 import * as z from "zod/v4";
 import helmet from "helmet";
+import type { ErrorRequestHandler } from "express";
 import { rateLimit } from "express-rate-limit";
 
 const PORT = Number(process.env.PORT ?? 3000);
@@ -41,6 +42,20 @@ const PREFLIGHT_PATHS = new Set([
   "/preflight/verify-conditions",
 ]);
 
+const JOURNEY_ID_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
+const OBSERVABILITY_SALT = randomUUID();
+const FEEDBACK_REASONS = [
+  "research_only",
+  "no_wallet",
+  "unsupported_network",
+  "insufficient_funds",
+  "spending_not_authorized",
+  "price",
+  "insufficient_value",
+  "integration_error",
+  "other",
+] as const;
+
 const analyzeUrlInput = z.object({
   url: z.string().url().max(2048).describe("URL público HTTP ou HTTPS"),
   objetivo: z
@@ -63,6 +78,14 @@ const verifyConditionsInput = z.object({
     .max(500)
     .optional()
     .describe("Contexto opcional para interpretar as condições"),
+});
+
+const conversionFeedbackInput = z.object({
+  journeyId: z.string().regex(JOURNEY_ID_PATTERN),
+  reason: z.enum(FEEDBACK_REASONS),
+  stage: z
+    .enum(["discovery", "preflight", "payment", "execution", "delivery"])
+    .optional(),
 });
 
 type VerifyConditionsInput = z.infer<typeof verifyConditionsInput>;
@@ -821,68 +844,349 @@ function getPaidRequestDetail(
   return null;
 }
 
+function getHeaderSummary(req: { get(name: string): string | undefined }): {
+  name: "payment-signature" | "x-payment" | null;
+  present: boolean;
+  encodedLength: number | null;
+} {
+  const paymentSignature = req.get("payment-signature");
+  const legacyPayment = req.get("x-payment");
+  const value = paymentSignature ?? legacyPayment;
+
+  return {
+    name: paymentSignature
+      ? "payment-signature"
+      : legacyPayment
+        ? "x-payment"
+        : null,
+    present: Boolean(value),
+    encodedLength: value ? Buffer.byteLength(value, "utf8") : null,
+  };
+}
+
+function getInboundJourneyId(value: string | undefined): string | null {
+  const candidate = value?.trim();
+  return candidate && JOURNEY_ID_PATTERN.test(candidate) ? candidate : null;
+}
+
+function getSafeFingerprint(value: string): string {
+  return createHash("sha256")
+    .update(OBSERVABILITY_SALT)
+    .update("\0")
+    .update(value)
+    .digest("hex")
+    .slice(0, 20);
+}
+
+function getSafeHeader(value: string | undefined, maxLength: number): string | null {
+  if (!value) {
+    return null;
+  }
+
+  return value.replace(/[\u0000-\u001f\u007f]/g, "?").slice(0, maxLength);
+}
+
+function classifyExecutionError(error: unknown): string {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+
+  if (message.includes("timeout") || message.includes("timed out")) {
+    return "timeout";
+  }
+
+  if (message.includes("dns") || message.includes("enotfound")) {
+    return "dns_failure";
+  }
+
+  if (
+    message.includes("privado") ||
+    message.includes("private") ||
+    message.includes("bloque")
+  ) {
+    return "target_blocked";
+  }
+
+  if (message.includes("limite") || message.includes("too large")) {
+    return "download_limit";
+  }
+
+  if (message.includes("openai") || message.includes("provider")) {
+    return "provider_failure";
+  }
+
+  if (message.includes("http") || message.includes("fetch")) {
+    return "upstream_http_failure";
+  }
+
+  return "unknown_failure";
+}
+
+function getPaymentOutcome(input: {
+  isPaidEndpoint: boolean;
+  requestIntent: PaidRequestIntent;
+  status: number;
+  signaturePresent: boolean;
+  paymentVerified: boolean;
+  executionSucceeded: boolean | null;
+  settlementResponsePresent: boolean;
+}): string | null {
+  if (!input.isPaidEndpoint) {
+    return null;
+  }
+
+  if (input.requestIntent !== "valid_input") {
+    return "not_attempted_invalid_input";
+  }
+
+  if (!input.signaturePresent && input.status === 402) {
+    return "challenge_issued";
+  }
+
+  if (input.signaturePresent && !input.paymentVerified) {
+    if (input.status >= 500) {
+      return "facilitator_unavailable";
+    }
+
+    return input.status === 402
+      ? "verification_failed"
+      : "payment_middleware_error";
+  }
+
+  if (!input.signaturePresent && input.status >= 500) {
+    return "facilitator_unavailable";
+  }
+
+  if (input.paymentVerified && input.executionSucceeded === false) {
+    return "execution_failed";
+  }
+
+  if (
+    input.paymentVerified &&
+    input.executionSucceeded === true &&
+    input.status >= 400
+  ) {
+    return "settlement_failed";
+  }
+
+  if (
+    input.paymentVerified &&
+    input.executionSucceeded === true &&
+    input.status < 400
+  ) {
+    return input.settlementResponsePresent
+      ? "settled"
+      : "success_without_settlement_header";
+  }
+
+  return "paid_endpoint_reached";
+}
+
+function markPaymentVerified(
+  _req: unknown,
+  res: { locals: Record<string, unknown> },
+  next: () => void,
+): void {
+  res.locals.paymentVerified = true;
+  res.locals.paymentVerifiedAt = Date.now();
+  next();
+}
+
+const safeJsonErrorHandler: ErrorRequestHandler = (error, req, res, next) => {
+  const candidate = error as { status?: unknown; type?: unknown };
+  const isMalformedJson =
+    candidate.status === 400 && candidate.type === "entity.parse.failed";
+
+  if (!isMalformedJson) {
+    next(error);
+    return;
+  }
+
+  const requestId = String(res.locals.requestId ?? randomUUID());
+  const inboundJourneyId = getInboundJourneyId(req.get("x-journey-id"));
+  const journeyId = String(
+    res.locals.journeyId ?? inboundJourneyId ?? randomUUID(),
+  );
+  const userAgent = getSafeHeader(req.get("user-agent"), 300);
+  const source = req.ip || req.socket.remoteAddress || "unknown";
+
+  if (!res.headersSent) {
+    res.setHeader("x-request-id", requestId);
+    res.setHeader("x-journey-id", journeyId);
+  }
+
+  console.log(JSON.stringify({
+    timestamp: new Date().toISOString(),
+    level: "info",
+    event: "request_parse_error",
+    requestId,
+    journeyId,
+    journeyIdSource: inboundJourneyId ? "client" : "server",
+    sourceFingerprint: getSafeFingerprint(source),
+    clientFingerprint: getSafeFingerprint(`${source}\0${userAgent ?? ""}`),
+    method: req.method,
+    path: req.path,
+    userAgent,
+    contentType: getSafeHeader(req.get("content-type"), 120),
+    bodyKind: "malformed_json",
+    validationIssues: ["body:invalid_json"],
+    requestIntent: "invalid_input",
+    paymentOutcome: "not_attempted_invalid_input",
+  }));
+
+  res.status(400).json({
+    error: "invalid_json",
+    message:
+      "Send syntactically valid application/json. Property names and string values must use double quotes.",
+    messagePt:
+      "Envie application/json sintaticamente válido. Os nomes das propriedades e os textos devem usar aspas duplas.",
+    journey: {
+      id: journeyId,
+      header: "x-journey-id",
+    },
+  });
+};
+
 const app = createMcpExpressApp({ host: HOST, allowedHosts: ['localhost', '127.0.0.1', 'healthcheck.railway.app', process.env.RAILWAY_PUBLIC_DOMAIN ?? 'mcp-x402-production.up.railway.app'] });
 app.set('trust proxy', 1);
 app.use(helmet());
 app.use((req, res, next) => {
   const startedAt = Date.now();
   const requestId = randomUUID();
-  res.setHeader('x-request-id', requestId);
+  const inboundJourneyId = getInboundJourneyId(req.get("x-journey-id"));
+  const journeyId = inboundJourneyId ?? randomUUID();
+  const userAgent = getSafeHeader(req.get("user-agent"), 300);
+  const source = req.ip || req.socket.remoteAddress || "unknown";
+  const sourceFingerprint = getSafeFingerprint(source);
+  const clientFingerprint = getSafeFingerprint(`${source}\0${userAgent ?? ""}`);
+  let responseFinished = false;
+
+  res.locals.requestId = requestId;
+  res.locals.journeyId = journeyId;
+  res.locals.journeyIdSource = inboundJourneyId ? "client" : "server";
+  res.locals.sourceFingerprint = sourceFingerprint;
+  res.locals.clientFingerprint = clientFingerprint;
+  res.locals.paymentVerified = false;
+  res.locals.executionSucceeded = null;
+  res.setHeader("x-request-id", requestId);
+  res.setHeader("x-journey-id", journeyId);
+
   res.on("finish", () => {
-  const isDiscovery = DISCOVERY_PATHS.has(req.path);
-  const isPaidEndpoint =
-    req.path === "/analyze" || req.path === "/verify-conditions";
-  const isPreflightEndpoint = PREFLIGHT_PATHS.has(req.path);
-  const diagnosticTargetPath = getDiagnosticTargetPath(req.path);
-  const paymentSignaturePresent = isPaidEndpoint
-    ? Boolean(req.get("payment-signature"))
-    : null;
+    responseFinished = true;
+    const isDiscovery = DISCOVERY_PATHS.has(req.path);
+    const isPaidEndpoint =
+      req.path === "/analyze" || req.path === "/verify-conditions";
+    const isPreflightEndpoint = PREFLIGHT_PATHS.has(req.path);
+    const diagnosticTargetPath = getDiagnosticTargetPath(req.path);
+    const paymentHeader = getHeaderSummary(req);
+    const requestIntent = diagnosticTargetPath
+      ? getPaidRequestIntent(req.method, diagnosticTargetPath, req.body)
+      : null;
+    const paymentVerified = Boolean(res.locals.paymentVerified);
+    const executionSucceeded =
+      typeof res.locals.executionSucceeded === "boolean"
+        ? res.locals.executionSucceeded
+        : null;
+    const settlementResponsePresent = Boolean(
+      res.getHeader("payment-response") ?? res.getHeader("x-payment-response"),
+    );
+    const paymentOutcome = getPaymentOutcome({
+      isPaidEndpoint,
+      requestIntent,
+      status: res.statusCode,
+      signaturePresent: paymentHeader.present,
+      paymentVerified,
+      executionSucceeded,
+      settlementResponsePresent,
+    });
+    const funnelStage =
+      isDiscovery ? "discovery" :
+      isPreflightEndpoint && res.statusCode < 400 ? "preflight_ready" :
+      isPreflightEndpoint ? "preflight_invalid" :
+      req.path === "/mcp" ? "mcp" :
+      paymentOutcome === "settled" || paymentOutcome === "success_without_settlement_header" ? "paid_success" :
+      paymentOutcome === "verification_failed" || paymentOutcome === "facilitator_unavailable" || paymentOutcome === "payment_middleware_error" || paymentOutcome === "execution_failed" || paymentOutcome === "settlement_failed" ? "paid_retry_error" :
+      isPaidEndpoint && res.statusCode === 402 ? "x402_challenge" :
+      isPaidEndpoint ? "paid_endpoint" :
+      req.path === "/feedback" ? "feedback" :
+      "other";
 
-  const funnelStage =
-    isDiscovery ? "discovery" :
-    isPreflightEndpoint && res.statusCode < 400 ? "preflight_ready" :
-    isPreflightEndpoint ? "preflight_invalid" :
-    req.path === "/mcp" ? "mcp" :
-    isPaidEndpoint && res.statusCode === 402 ? "x402_challenge" :
-    isPaidEndpoint && paymentSignaturePresent && res.statusCode < 400 ? "paid_success" :
-    isPaidEndpoint && paymentSignaturePresent ? "paid_retry_error" :
-    isPaidEndpoint ? "paid_endpoint" :
-    "other";
+    console.log(JSON.stringify({
+      timestamp: new Date().toISOString(),
+      level: "info",
+      event: "http_request",
+      requestId,
+      journeyId,
+      journeyIdSource: res.locals.journeyIdSource,
+      sourceFingerprint,
+      clientFingerprint,
+      method: req.method,
+      path: req.path,
+      targetPath: diagnosticTargetPath,
+      status: res.statusCode,
+      funnelStage,
+      userAgent,
+      contentType: getSafeHeader(req.get("content-type"), 120),
+      paymentHeaderName: isPaidEndpoint ? paymentHeader.name : null,
+      paymentSignaturePresent: isPaidEndpoint ? paymentHeader.present : null,
+      paymentSignatureEncodedLength: isPaidEndpoint
+        ? paymentHeader.encodedLength
+        : null,
+      paymentVerified: isPaidEndpoint ? paymentVerified : null,
+      paymentVerificationMs:
+        isPaidEndpoint && typeof res.locals.paymentVerifiedAt === "number"
+          ? res.locals.paymentVerifiedAt - startedAt
+          : null,
+      paymentResponseHeaderPresent: isPaidEndpoint
+        ? settlementResponsePresent
+        : null,
+      paymentOutcome,
+      bodyKind: diagnosticTargetPath ? getRequestBodyKind(req.body) : null,
+      bodyKeys: diagnosticTargetPath ? getSafeBodyKeys(req.body) : null,
+      validationIssues: diagnosticTargetPath
+        ? getValidationIssues(diagnosticTargetPath, req.body)
+        : null,
+      requestIntent,
+      requestIntentDetail: diagnosticTargetPath
+        ? getPaidRequestDetail(diagnosticTargetPath, req.body)
+        : null,
+      executionStarted: isPaidEndpoint
+        ? typeof res.locals.executionStartedAt === "number"
+        : null,
+      operation: isPaidEndpoint ? (res.locals.operation ?? null) : null,
+      executionSucceeded: isPaidEndpoint ? executionSucceeded : null,
+      executionErrorCategory: isPaidEndpoint
+        ? (res.locals.executionErrorCategory ?? null)
+        : null,
+      executionMs:
+        isPaidEndpoint && typeof res.locals.executionStartedAt === "number"
+          ? (typeof res.locals.executionFinishedAt === "number"
+              ? res.locals.executionFinishedAt
+              : Date.now()) - res.locals.executionStartedAt
+          : null,
+      deliveryOutcome: "response_finished",
+      durationMs: Date.now() - startedAt,
+    }));
+  });
 
-  console.log(JSON.stringify({
-    timestamp: new Date().toISOString(),
-    level: "info",
-    event: "http_request",
-    requestId,
-    method: req.method,
-    path: req.path,
-    status: res.statusCode,
-    funnelStage,
-    userAgent: req.get("user-agent")?.slice(0, 300) ?? null,
-contentType: req.get("content-type")?.slice(0, 120) ?? null,
-paymentSignaturePresent,
-bodyKind: diagnosticTargetPath
-  ? getRequestBodyKind(req.body)
-  : null,
-bodyKeys: diagnosticTargetPath
-  ? getSafeBodyKeys(req.body)
-  : null,
-validationIssues: diagnosticTargetPath
-  ? getValidationIssues(diagnosticTargetPath, req.body)
-  : null,
-requestIntent: diagnosticTargetPath
-  ? getPaidRequestIntent(
-      req.method,
-      diagnosticTargetPath,
-      req.body,
-    )
-  : null,
-requestIntentDetail: diagnosticTargetPath
-  ? getPaidRequestDetail(diagnosticTargetPath, req.body)
-  : null,
-    durationMs: Date.now() - startedAt,
-  }));
-});
+  res.on("close", () => {
+    if (responseFinished) {
+      return;
+    }
+
+    console.log(JSON.stringify({
+      timestamp: new Date().toISOString(),
+      level: "warn",
+      event: "request_aborted",
+      requestId,
+      journeyId,
+      sourceFingerprint,
+      clientFingerprint,
+      method: req.method,
+      path: req.path,
+      deliveryOutcome: "connection_closed_before_finish",
+      durationMs: Date.now() - startedAt,
+    }));
+  });
+
   next();
 });
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, limit: 100, standardHeaders: "draft-8", legacyHeaders: false, message: { error: "Too many requests. Try again later." } }));
@@ -1048,6 +1352,7 @@ app.get("/", (_req, res) => {
       verifyConditions: `POST ${PUBLIC_SERVICE_URL}/verify-conditions`,
       preflightAnalyze: `POST ${PUBLIC_SERVICE_URL}/preflight/analyze`,
       preflightVerifyConditions: `POST ${PUBLIC_SERVICE_URL}/preflight/verify-conditions`,
+      feedback: `POST ${PUBLIC_SERVICE_URL}/feedback`,
       health: `${PUBLIC_SERVICE_URL}/health`,
     },
   });
@@ -1337,6 +1642,7 @@ app.get("/agents.json", (_req, res) => {
       analyze: `${PUBLIC_SERVICE_URL}/analyze`,
       preflightAnalyze: `${PUBLIC_SERVICE_URL}/preflight/analyze`,
       preflightVerifyConditions: `${PUBLIC_SERVICE_URL}/preflight/verify-conditions`,
+      feedback: `${PUBLIC_SERVICE_URL}/feedback`,
       health: `${PUBLIC_SERVICE_URL}/health`,
     },
     payment: {
@@ -1371,6 +1677,7 @@ app.get("/llms.txt", (_req, res) => {
 - Verificação paga: POST ${PUBLIC_SERVICE_URL}/verify-conditions — decisão por condição, provas, verificationId e pageHash SHA-256
 - Pré-validação gratuita da análise: POST ${PUBLIC_SERVICE_URL}/preflight/analyze — valida o JSON, informa preço e explica o próximo passo sem cobrar
 - Pré-validação gratuita da verificação: POST ${PUBLIC_SERVICE_URL}/preflight/verify-conditions — valida URL e condições, informa preço e explica o próximo passo sem cobrar
+- Feedback opcional da integração: POST ${PUBLIC_SERVICE_URL}/feedback — aceita apenas etapa e motivo normalizados, sem texto livre
 - Estado: GET ${PUBLIC_SERVICE_URL}/health
 - Especificação OpenAPI: GET ${PUBLIC_SERVICE_URL}/openapi.json
 
@@ -1391,6 +1698,7 @@ Content-Type: application/json
 
 app.post("/preflight/analyze", (req, res) => {
   const parsed = analyzeUrlInput.safeParse(req.body);
+  const journeyId = String(res.locals.journeyId);
 
   if (!parsed.success) {
     res.status(400).json({
@@ -1409,6 +1717,11 @@ app.post("/preflight/analyze", (req, res) => {
   },
   nextStep:
     "Correct the JSON and repeat this free preflight POST. When ready is true, send the identical body to /analyze.",
+  journey: {
+    id: journeyId,
+    header: "x-journey-id",
+    nextRequest: "Repeat this value in the x-journey-id header.",
+  },
   details: z.treeifyError(parsed.error),
 });
     return;
@@ -1424,6 +1737,11 @@ app.post("/preflight/analyze", (req, res) => {
     validated: {
       operation: "analyze",
       objectiveProvided: Boolean(parsed.data.objetivo),
+    },
+    journey: {
+      id: journeyId,
+      header: "x-journey-id",
+      nextRequest: "Repeat this value in the x-journey-id header.",
     },
     payment: {
       protocol: "x402",
@@ -1442,11 +1760,18 @@ app.post("/preflight/analyze", (req, res) => {
         "Recommended actions",
       ],
     },
+    feedback: {
+      optional: true,
+      url: `${PUBLIC_SERVICE_URL}/feedback`,
+      journeyId,
+      reasons: FEEDBACK_REASONS,
+    },
   });
 });
 
 app.post("/preflight/verify-conditions", (req, res) => {
   const parsed = verifyConditionsInput.safeParse(req.body);
+  const journeyId = String(res.locals.journeyId);
 
   if (!parsed.success) {
     res.status(400).json({
@@ -1466,6 +1791,11 @@ app.post("/preflight/verify-conditions", (req, res) => {
   },
   nextStep:
     "Correct the JSON and repeat this free preflight POST. When ready is true, send the identical body to /verify-conditions.",
+  journey: {
+    id: journeyId,
+    header: "x-journey-id",
+    nextRequest: "Repeat this value in the x-journey-id header.",
+  },
   details: z.treeifyError(parsed.error),
 });
     return;
@@ -1482,6 +1812,11 @@ app.post("/preflight/verify-conditions", (req, res) => {
       operation: "verify-conditions",
       conditionsCount: parsed.data.condicoes.length,
       contextProvided: Boolean(parsed.data.contexto),
+    },
+    journey: {
+      id: journeyId,
+      header: "x-journey-id",
+      nextRequest: "Repeat this value in the x-journey-id header.",
     },
     payment: {
       protocol: "x402",
@@ -1503,6 +1838,45 @@ app.post("/preflight/verify-conditions", (req, res) => {
       decisionValues: ["confirmado", "rejeitado", "incerto"],
       includesEvidencePerCondition: true,
     },
+    feedback: {
+      optional: true,
+      url: `${PUBLIC_SERVICE_URL}/feedback`,
+      journeyId,
+      reasons: FEEDBACK_REASONS,
+    },
+  });
+});
+
+app.post("/feedback", (req, res) => {
+  const parsed = conversionFeedbackInput.safeParse(req.body);
+
+  if (!parsed.success) {
+    res.status(400).json({
+      accepted: false,
+      error: "invalid_feedback",
+      required: ["journeyId", "reason"],
+      optional: ["stage"],
+      allowedReasons: FEEDBACK_REASONS,
+      details: z.treeifyError(parsed.error),
+    });
+    return;
+  }
+
+  console.log(JSON.stringify({
+    timestamp: new Date().toISOString(),
+    level: "info",
+    event: "conversion_feedback",
+    requestId: res.locals.requestId,
+    journeyId: parsed.data.journeyId,
+    reason: parsed.data.reason,
+    stage: parsed.data.stage ?? null,
+    sourceFingerprint: res.locals.sourceFingerprint,
+    clientFingerprint: res.locals.clientFingerprint,
+  }));
+
+  res.status(202).json({
+    accepted: true,
+    journeyId: parsed.data.journeyId,
   });
 });
 
@@ -1559,6 +1933,11 @@ app.post(
     objetivo: "Summarize the page",
   },
   preflight: `${PUBLIC_SERVICE_URL}/preflight/analyze`,
+  journey: {
+    id: String(res.locals.journeyId),
+    header: "x-journey-id",
+    nextRequest: "Repeat this value in the x-journey-id header.",
+  },
   nextStep:
     "Correct the JSON, validate it using the free preflight endpoint, then repeat this POST.",
   details: z.treeifyError(parsed.error),
@@ -1570,12 +1949,21 @@ app.post(
     next();
   },
   requireAnalyzePayment,
+  markPaymentVerified,
   async (_req, res) => {
+    res.locals.executionStartedAt = Date.now();
+    res.locals.operation = "analyze";
+
     try {
       const input = res.locals.analyzeInput as AnalyzeUrlInput;
       const analysis = await analyzePage(input);
+      res.locals.executionSucceeded = true;
+      res.locals.executionFinishedAt = Date.now();
       res.json(analysis);
     } catch (error) {
+      res.locals.executionSucceeded = false;
+      res.locals.executionFinishedAt = Date.now();
+      res.locals.executionErrorCategory = classifyExecutionError(error);
       const message = error instanceof Error ? error.message : "Erro desconhecido";
       res.status(502).json({ error: `Falha ao analisar o URL: ${message}` });
     }
@@ -1602,6 +1990,11 @@ app.post(
     contexto: "Pre-purchase verification",
   },
   preflight: `${PUBLIC_SERVICE_URL}/preflight/verify-conditions`,
+  journey: {
+    id: String(res.locals.journeyId),
+    header: "x-journey-id",
+    nextRequest: "Repeat this value in the x-journey-id header.",
+  },
   nextStep:
     "Correct the JSON, validate it using the free preflight endpoint, then repeat this POST.",
   details: z.treeifyError(parsed.error),
@@ -1613,13 +2006,22 @@ app.post(
     next();
   },
   requireVerifyConditionsPayment,
+  markPaymentVerified,
   async (_req, res) => {
+    res.locals.executionStartedAt = Date.now();
+    res.locals.operation = "verify-conditions";
+
     try {
       const input =
         res.locals.verifyConditionsInput as VerifyConditionsInput;
       const verification = await verifyConditions(input);
+      res.locals.executionSucceeded = true;
+      res.locals.executionFinishedAt = Date.now();
       res.json(verification);
     } catch (error) {
+      res.locals.executionSucceeded = false;
+      res.locals.executionFinishedAt = Date.now();
+      res.locals.executionErrorCategory = classifyExecutionError(error);
       const message =
         error instanceof Error ? error.message : "Erro desconhecido";
       res
@@ -1630,6 +2032,8 @@ app.post(
     }
   },
 );
+
+app.use(safeJsonErrorHandler);
 
 app.listen(PORT, HOST, () => {
   const displayHost = HOST === "0.0.0.0" ? "localhost" : HOST;
