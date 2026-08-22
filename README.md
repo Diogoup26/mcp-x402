@@ -1,19 +1,40 @@
-# MCP x402 - Paid AI Verification and URL Analysis
-## Pay-per-use AI analysis for agents and applications
+# MCP x402 — Evidence-Backed Web Verification for AI Agents
 
-Send a public HTTP or HTTPS URL and receive a concise report with a summary, key facts, risks or limitations, and recommended actions.
+## Verify a seller, product, offer, policy, or claim before an agent acts
 
-- **No account or subscription:** payment is made per request with x402.
-- **Transparent prices:** $0.02 for `consultar_ia`; $0.05 for `analisar_url` and `verificar_condicoes` on Base mainnet.
-- **Agent-ready:** available through MCP as `consultar_ia`, `analisar_url`, and `verificar_condicoes`.
-- **Live and validated:** x402 v2, Coinbase validation passed, and Bazaar discovery metadata enabled.
-- **Live endpoint:** `https://mcp-x402-production.up.railway.app/analyze`
-- **Service status:** `https://mcp-x402-production.up.railway.app/health`
-- **Integration help:** open an issue at `https://github.com/Diogoup26/mcp-x402/issues`.
+Give an AI agent a public HTTP(S) page and 1 to 10 concrete conditions. The `verificar_condicoes` tool returns an evidence-based decision for every condition:
 
-Ideal for AI agents, research automations, content screening, and applications that need webpage analysis without managing their own OpenAI integration.
+- `confirmado` — the page clearly supports the condition.
+- `rejeitado` — the page clearly contradicts the condition.
+- `incerto` — the available page evidence is insufficient.
 
-A production-ready Model Context Protocol (MCP) service and HTTP API that provides paid AI assistance and public URL analysis using the OpenAI Responses API and x402 payments.
+Each verification includes the final source URL, page title, timestamp, condition-by-condition explanation, quoted evidence when available, a unique `verificationId`, and a SHA-256 `pageHash`.
+
+### Designed for
+
+- AI purchasing and procurement agents;
+- seller, product and offer verification;
+- pre-purchase due diligence;
+- policy and terms checking;
+- commercial automation that requires evidence before taking action.
+
+### Simple x402 integration
+
+- Free preflight validation before payment.
+- `$0.05 USDC` per verification on Base mainnet.
+- No account or subscription required.
+- Available through MCP and HTTP.
+- Ready-to-run buyer included in this repository.
+- Coinbase x402 validation passed and Bazaar discovery enabled.
+
+### Live endpoints
+
+- MCP: `https://mcp-x402-production.up.railway.app/mcp`
+- Free verification preflight: `POST https://mcp-x402-production.up.railway.app/preflight/verify-conditions`
+- Paid verification: `POST https://mcp-x402-production.up.railway.app/verify-conditions`
+- Health: `GET https://mcp-x402-production.up.railway.app/health`
+
+The service also provides paid public URL analysis and general AI consultation through `analisar_url` and `consultar_ia`.
 
 ## Live Service
 
