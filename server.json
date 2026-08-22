@@ -1,0 +1,17 @@
+{
+    "$schema":  "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+    "name":  "io.github.Diogoup26/mcp-x402",
+    "title":  "Diogo AI URL Analysis",
+    "description":  "Remote MCP and x402 service for paid public URL analysis and auditable condition verification.",
+    "version":  "1.2.0",
+    "repository":  {
+                       "url":  "https://github.com/Diogoup26/mcp-x402",
+                       "source":  "github"
+                   },
+    "remotes":  [
+                    {
+                        "type":  "streamable-http",
+                        "url":  "https://mcp-x402-production.up.railway.app/mcp"
+                    }
+                ]
+}
