@@ -9,8 +9,10 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "analyze": "node --env-file=.env.test ./dist/buyer.js",
+    "verify": "node --env-file=.env.test ./dist/verify-buyer.js",
     "mcp:analyze": "node --env-file=.env.test ./dist/mcp-buyer.js analisar_url",
-    "mcp:consult": "node --env-file=.env.test ./dist/mcp-buyer.js consultar_ia"
+    "mcp:consult": "node --env-file=.env.test ./dist/mcp-buyer.js consultar_ia",
+    "mcp:verify": "node --env-file=.env.test ./dist/mcp-buyer.js verificar_condicoes"
   },
   "keywords": [],
   "author": "",

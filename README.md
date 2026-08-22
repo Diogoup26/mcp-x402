@@ -145,20 +145,48 @@ curl https://mcp-x402-production.up.railway.app/health
 ```
 
 
-## Paid End-to-End Tests
+## Ready-to-Run x402 Buyer
 
-Build the project before running a buyer:
+The repository includes ready-to-run buyers for applications and AI agents. The MCP buyer connects to the live service, validates the x402 payment requirements against Base mainnet USDC and a maximum payment of $0.05, signs the payment, retries the same tool call, and prints the settlement receipt and result.
+
+Clone and prepare the buyer:
+
+```bash
+git clone https://github.com/Diogoup26/mcp-x402.git
+cd mcp-x402
+npm install
+```
+
+Create a local `.env.test` file in the project root:
+
+```env
+EVM_PRIVATE_KEY=0xYOUR_64_HEX_CHARACTER_PRIVATE_KEY
+```
+
+Never commit `.env.test` or expose the private key.
+
+Build the project:
 
 ```bash
 npm run build
 ```
 
-The commands below authorize real x402 payments on Base mainnet: 0.02 USDC for `consultar_ia` and 0.05 USDC for `analisar_url`. Only run a command when a real paid request is intended.
+The following commands authorize real x402 payments on Base mainnet:
+
+- `consultar_ia`: $0.02 USDC
+- `analisar_url`: $0.05 USDC
+- `verificar_condicoes`: $0.05 USDC
 
 ### HTTP URL Analysis
 
 ```bash
 npm run analyze -- "https://example.com" "Summarize this page."
+```
+
+### HTTP Decision Verification
+
+```bash
+npm run verify -- "https://example.com" "The page identifies the seller."
 ```
 
 ### MCP URL Analysis
@@ -173,8 +201,23 @@ npm run mcp:analyze -- "https://example.com" "Summarize this page."
 npm run mcp:consult -- "Reply only with: MCP OK"
 ```
 
-A successful MCP payment prints `PAGAMENTO MCP: success`, a settlement receipt, and the tool response.
+### MCP Decision Verification
 
+```bash
+npm run mcp:verify -- "https://example.com" "The page identifies the seller."
+```
+
+A successful MCP payment prints:
+
+- `PAGAMENTO MCP: success`
+- the settlement receipt
+- the tool response
+
+The MCP buyer never prints the private key and rejects any payment that:
+
+- is not on Base mainnet;
+- does not use the configured Base USDC contract;
+- exceeds $0.05 USDC.
 ## Deployment
 
 The `main` branch is connected to Railway. Every successful push triggers a new deployment. Railway uses:
