@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-const SERVICE_VERSION = "1.2.2";
+const SERVICE_VERSION = "1.2.3";
 const SERVICE_URL = (
   process.env.SERVICE_URL ??
   "https://mcp-x402-production.up.railway.app"
@@ -183,6 +183,33 @@ async function main(): Promise<void> {
   );
   await verifyChallenge.body?.cancel();
 
+  const mcpPreflight = await expectStatus(
+    "MCP paid tool preflight",
+    "/preflight/mcp",
+    200,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        toolName: "verificar_condicoes",
+        arguments: verifyBody,
+      }),
+    },
+  );
+  const mcpPreflightBody = await mcpPreflight.json() as {
+    ready?: unknown;
+    target?: { url?: unknown; toolName?: unknown };
+  };
+  assert(mcpPreflightBody.ready === true, "Preflight MCP não ficou pronto");
+  assert(
+    mcpPreflightBody.target?.url === `${SERVICE_URL}/mcp`,
+    "Preflight MCP não devolveu o endpoint público esperado",
+  );
+  assert(
+    mcpPreflightBody.target?.toolName === "verificar_condicoes",
+    "Preflight MCP não preservou o nome da ferramenta",
+  );
+
   const wrongMethod = await expectStatus(
     "paid endpoint method guard",
     "/analyze",
@@ -296,12 +323,38 @@ async function main(): Promise<void> {
   const toolChallengeBody = await parseMcpResponse(toolChallenge);
   const toolChallengeResult = toolChallengeBody.result as {
     isError?: unknown;
-    structuredContent?: { accepts?: unknown[] };
+    structuredContent?: {
+      accepts?: unknown[];
+      resource?: { url?: unknown };
+      extensions?: {
+        bazaar?: {
+          info?: {
+            input?: { type?: unknown; toolName?: unknown };
+          };
+        };
+      };
+    };
   } | undefined;
   assert(toolChallengeResult?.isError === true, "Tool paga não exigiu pagamento");
   assert(
     Array.isArray(toolChallengeResult.structuredContent?.accepts),
     "Desafio MCP sem requisitos x402",
+  );
+  const advertisedMcpUrl = toolChallengeResult.structuredContent?.resource?.url;
+  assert(
+    advertisedMcpUrl === `${SERVICE_URL}/mcp`,
+    "Desafio MCP não anunciou o endpoint HTTPS público",
+  );
+  assert(
+    new URL(String(advertisedMcpUrl)).protocol === "https:",
+    "Metadata MCP/Bazaar não usa HTTPS",
+  );
+  const bazaarInput =
+    toolChallengeResult.structuredContent?.extensions?.bazaar?.info?.input;
+  assert(bazaarInput?.type === "mcp", "Extensão Bazaar não declarou type=mcp");
+  assert(
+    bazaarInput?.toolName === "verificar_condicoes",
+    "Extensão Bazaar não preservou o toolName",
   );
 
   console.log(JSON.stringify({

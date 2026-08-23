@@ -25,11 +25,12 @@ Each verification includes the final source URL, page title, timestamp, conditio
 - No account or subscription required.
 - Available through MCP and HTTP.
 - Ready-to-run buyer included in this repository.
-- Coinbase x402 validation passed and Bazaar discovery enabled.
+- Bazaar discovery metadata enabled on the paid HTTP and MCP surfaces.
 
 ### Live endpoints
 
 - MCP: `https://mcp-x402-production.up.railway.app/mcp`
+- Free MCP preflight: `POST https://mcp-x402-production.up.railway.app/preflight/mcp`
 - Free verification preflight: `POST https://mcp-x402-production.up.railway.app/preflight/verify-conditions`
 - Paid verification: `POST https://mcp-x402-production.up.railway.app/verify-conditions`
 - Health: `GET https://mcp-x402-production.up.railway.app/health`
@@ -50,10 +51,10 @@ The service also provides paid public URL analysis and general AI consultation t
 - Production deployment active on Railway
 - x402 version 2 payment flow
 - Base mainnet payments (`eip155:8453`)
-- Coinbase x402 validation passed
-- Simulation accepted with HTTP 402
-- Bazaar discovery metadata enabled
-- Coinbase index active
+- Paid HTTP endpoints return valid x402 challenges with Bazaar metadata
+- MCP and HTTP payment, execution, settlement, and delivery confirmed on-chain
+- MCP Bazaar metadata advertises the public HTTPS MCP server URL
+- CDP native MCP catalog indexing is not yet claimed as confirmed; upstream tracking: [coinbase/cdp-sdk#764](https://github.com/coinbase/cdp-sdk/issues/764)
 
 ## MCP Tools
 
@@ -118,6 +119,7 @@ This is designed for agents that need an evidence-based decision before taking t
 | `HOST` | No | Listening host. Defaults to `0.0.0.0`. |
 | `PORT` | No | Listening port. Defaults to `3000`. |
 | `RAILWAY_PUBLIC_DOMAIN` | Railway | Automatically supplied by Railway. |
+| `PUBLIC_SERVICE_URL` | No | Canonical public HTTPS origin used in discovery metadata. Railway derives it automatically from `RAILWAY_PUBLIC_DOMAIN`; the production URL is the fallback. |
 | `OBSERVABILITY_SALT` | Recommended | Stable secret salt used only to pseudonymize source/client fingerprints across restarts. |
 
 ### Local Buyer
@@ -253,10 +255,13 @@ npm run smoke
 ```
 
 Use `SERVICE_URL` to target another deployment. The test uses one persistent
-`x-journey-id`, sends `User-Agent: Diogo-Smoke/1.2.2`, and never creates or
+`x-journey-id`, sends `User-Agent: Diogo-Smoke/1.2.3`, verifies that the MCP
+x402 challenge advertises the public HTTPS endpoint with `type=mcp` and the
+correct `toolName`, and never creates or
 signs a payment.
 
-The three payment buyers also send a persistent journey ID. Set `JOURNEY_ID`
+The three payment buyers now perform discovery and a free preflight before the
+paid request, using the same persistent journey ID throughout. Set `JOURNEY_ID`
 to reuse an existing journey; otherwise each buyer creates and prints one.
 
 ## Funnel Observability
@@ -270,6 +275,10 @@ deduplicated.
 Rejected MCP requests include safe protocol diagnostics such as method,
 content type, `Accept`, JSON-RPC shape and the SDK error classification. All
 events include the request and journey correlation fields when available.
+OpenAI usage events inherit the same request, journey, client, and source
+correlation. Railway's `X-Railway-Request-Id`, edge POP, and request-start time
+are also recorded, while client source fingerprints use Railway's stable
+`X-Real-IP` value and remain pseudonymized with `OBSERVABILITY_SALT`.
 
 ## Deployment
 

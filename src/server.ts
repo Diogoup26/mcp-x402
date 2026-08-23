@@ -24,6 +24,17 @@ import { rateLimit } from "express-rate-limit";
 const PORT = Number(process.env.PORT ?? 3000);
 const HOST = process.env.HOST ?? "0.0.0.0";
 const OPENAI_MODEL = process.env.OPENAI_MODEL ?? "gpt-5-mini";
+const RAILWAY_PUBLIC_DOMAIN = process.env.RAILWAY_PUBLIC_DOMAIN
+  ?.trim()
+  .replace(/^https?:\/\//, "")
+  .replace(/\/+$/, "");
+const PUBLIC_SERVICE_URL = (
+  process.env.PUBLIC_SERVICE_URL?.trim() ||
+  (RAILWAY_PUBLIC_DOMAIN
+    ? `https://${RAILWAY_PUBLIC_DOMAIN}`
+    : "https://mcp-x402-production.up.railway.app")
+).replace(/\/+$/, "");
+const PUBLIC_MCP_SERVER_URL = `${PUBLIC_SERVICE_URL}/mcp`;
 const MAX_DOWNLOAD_BYTES = 1_500_000;
 const MAX_ANALYSIS_CHARS = 12_000;
 const PAY_TO = process.env.X402_PAY_TO ?? "0xAe94Cc8080c9DcAF97Dda998F926ec52AF968d61";
@@ -31,7 +42,7 @@ const X402_NETWORK = (process.env.X402_NETWORK ?? "eip155:84532") as `${string}:
 const CONSULT_PRICE = "$0.02";
 const ANALYZE_PRICE = "$0.05";
 const VERIFY_PRICE = "$0.05";
-const SERVICE_VERSION = "1.2.2";
+const SERVICE_VERSION = "1.2.3";
 const X402_FACILITATOR_URL = "https://x402.org/facilitator";
 const DISCOVERY_PATHS = new Set([
   "/",
@@ -46,6 +57,7 @@ const DISCOVERY_PATHS = new Set([
 const PREFLIGHT_PATHS = new Set([
   "/preflight/analyze",
   "/preflight/verify-conditions",
+  "/preflight/mcp",
 ]);
 
 const JOURNEY_ID_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
@@ -83,6 +95,9 @@ type McpTraceState = {
 
 type McpRequestTrace = {
   requestId: string;
+  railwayRequestId: string | null;
+  railwayEdge: string | null;
+  requestStartUnixMs: number | null;
   journeyId: string;
   journeyIdSource: "client" | "server";
   sourceFingerprint: string;
@@ -91,7 +106,101 @@ type McpRequestTrace = {
   state: McpTraceState;
 };
 
+type RequestTrace = Omit<McpRequestTrace, "state">;
+
 const mcpRequestContext = new AsyncLocalStorage<McpRequestTrace>();
+const requestContext = new AsyncLocalStorage<RequestTrace>();
+
+const originalConsoleLog = console.log.bind(console);
+const FACILITATOR_EXTENSION_PREFIX = "[x402] extension responses: ";
+const FACILITATOR_EXTENSION_FIELDS = new Set([
+  "status",
+  "rejectedReason",
+  "reason",
+  "code",
+]);
+
+function getFacilitatorExtensionResponses(
+  message: string,
+): Record<string, Record<string, string | number | boolean>> | null {
+  if (!message.startsWith(FACILITATOR_EXTENSION_PREFIX)) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(
+      message.slice(FACILITATOR_EXTENSION_PREFIX.length),
+    ) as unknown;
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+
+    const sanitized: Record<
+      string,
+      Record<string, string | number | boolean>
+    > = {};
+    for (const [extensionName, rawResponse] of Object.entries(parsed)) {
+      if (
+        !/^[A-Za-z0-9_-]{1,100}$/.test(extensionName) ||
+        rawResponse === null ||
+        typeof rawResponse !== "object" ||
+        Array.isArray(rawResponse)
+      ) {
+        continue;
+      }
+
+      const response: Record<string, string | number | boolean> = {};
+      for (const [field, value] of Object.entries(rawResponse)) {
+        if (!FACILITATOR_EXTENSION_FIELDS.has(field)) {
+          continue;
+        }
+        if (typeof value === "string") {
+          response[field] = value.slice(0, 500);
+        } else if (typeof value === "number" || typeof value === "boolean") {
+          response[field] = value;
+        }
+      }
+      sanitized[extensionName] = response;
+    }
+    return sanitized;
+  } catch {
+    return null;
+  }
+}
+
+// @x402/core emits facilitator extension results as plain text. Convert that
+// one known SDK message into correlated JSON so Railway exports remain NDJSON.
+console.log = (...args: unknown[]) => {
+  const extensionResponses =
+    args.length === 1 && typeof args[0] === "string"
+      ? getFacilitatorExtensionResponses(args[0])
+      : null;
+  if (!extensionResponses) {
+    originalConsoleLog(...args);
+    return;
+  }
+
+  const requestTrace = requestContext.getStore();
+  const mcpTrace = mcpRequestContext.getStore();
+  originalConsoleLog(JSON.stringify({
+    timestamp: new Date().toISOString(),
+    level: "info",
+    event: "facilitator_extension_response",
+    requestId: mcpTrace?.requestId ?? requestTrace?.requestId ?? null,
+    railwayRequestId:
+      mcpTrace?.railwayRequestId ?? requestTrace?.railwayRequestId ?? null,
+    journeyId: mcpTrace?.journeyId ?? requestTrace?.journeyId ?? null,
+    toolName: mcpTrace?.state.toolName ?? null,
+    extensions: extensionResponses,
+  }));
+};
+
+const publicMcpUrl = new URL(PUBLIC_MCP_SERVER_URL);
+if (publicMcpUrl.protocol !== "https:") {
+  throw new Error(
+    "PUBLIC_SERVICE_URL must use HTTPS so MCP Bazaar metadata is valid.",
+  );
+}
 
 function createMcpTraceState(): McpTraceState {
   return {
@@ -157,6 +266,9 @@ function logMcpLifecycle(
     level,
     event,
     requestId: trace?.requestId ?? null,
+    railwayRequestId: trace?.railwayRequestId ?? null,
+    railwayEdge: trace?.railwayEdge ?? null,
+    requestStartUnixMs: trace?.requestStartUnixMs ?? null,
     journeyId: trace?.journeyId ?? null,
     journeyIdSource: trace?.journeyIdSource ?? null,
     sourceFingerprint: trace?.sourceFingerprint ?? null,
@@ -239,77 +351,85 @@ function getPaymentErrorCategory(result: unknown): string | null {
   return "payment_rejected_other";
 }
 
-const mcpPaymentHooks: NonNullable<PaymentWrapperConfig["hooks"]> = {
-  onBeforeExecution: ({ toolName }) => {
-    const trace = mcpRequestContext.getStore();
-    const now = Date.now();
+function createMcpPaymentHooks(
+  expectedToolName: string,
+): NonNullable<PaymentWrapperConfig["hooks"]> {
+  return {
+    onBeforeExecution: () => {
+      const trace = mcpRequestContext.getStore();
+      const now = Date.now();
 
-    if (trace) {
-      trace.state.toolName = toolName;
-      trace.state.paymentVerified = true;
-      trace.state.executionStartedAt = now;
-    }
+      if (trace) {
+        trace.state.toolName = expectedToolName;
+        trace.state.paymentVerified = true;
+        trace.state.executionStartedAt = now;
+      }
 
-    logMcpLifecycle("mcp_payment_verified", { toolName });
-    logMcpLifecycle("mcp_execution_started", { toolName });
-  },
-  onAfterExecution: ({ toolName, result }) => {
-    const trace = mcpRequestContext.getStore();
-    const executionSucceeded = result.isError !== true;
-    const now = Date.now();
-
-    if (trace) {
-      trace.state.executionFinishedAt = now;
-      trace.state.executionSucceeded = executionSucceeded;
-    }
-
-    logMcpLifecycle("mcp_execution_finished", {
-      toolName,
-      executionSucceeded,
-      executionMs:
-        trace?.state.executionStartedAt !== null &&
-        trace?.state.executionStartedAt !== undefined
-          ? now - trace.state.executionStartedAt
-          : null,
-    });
-  },
-  onAfterSettlement: ({ toolName, settlement }) => {
-    const trace = mcpRequestContext.getStore();
-    const paymentWasAlreadyVerified = trace?.state.paymentVerified === true;
-    const settlementRecord = settlement as unknown as Record<string, unknown>;
-    const settlementSucceeded = settlementRecord.success === true;
-    const network =
-      typeof settlementRecord.network === "string"
-        ? settlementRecord.network.slice(0, 100)
-        : null;
-    const transaction =
-      typeof settlementRecord.transaction === "string"
-        ? settlementRecord.transaction.slice(0, 200)
-        : null;
-
-    if (trace) {
-      trace.state.paymentVerified = true;
-      trace.state.settlementAttempted = true;
-      trace.state.settlementSucceeded = settlementSucceeded;
-      trace.state.settlementNetwork = network;
-      trace.state.settlementTransaction = transaction;
-    }
-
-    if (!paymentWasAlreadyVerified) {
       logMcpLifecycle("mcp_payment_verified", {
-        toolName,
-        recoveredFromSettlement: true,
+        toolName: expectedToolName,
       });
-    }
+      logMcpLifecycle("mcp_execution_started", {
+        toolName: expectedToolName,
+      });
+    },
+    onAfterExecution: ({ result }) => {
+      const trace = mcpRequestContext.getStore();
+      const executionSucceeded = result.isError !== true;
+      const now = Date.now();
 
-    logMcpLifecycle("mcp_payment_settled", {
-      toolName,
-      settlementSucceeded,
-      network,
-      transaction,
-    });
-  },
-};
+      if (trace) {
+        trace.state.executionFinishedAt = now;
+        trace.state.executionSucceeded = executionSucceeded;
+      }
+
+      logMcpLifecycle("mcp_execution_finished", {
+        toolName: expectedToolName,
+        executionSucceeded,
+        executionMs:
+          trace?.state.executionStartedAt !== null &&
+          trace?.state.executionStartedAt !== undefined
+            ? now - trace.state.executionStartedAt
+            : null,
+      });
+    },
+    onAfterSettlement: ({ settlement }) => {
+      const trace = mcpRequestContext.getStore();
+      const paymentWasAlreadyVerified = trace?.state.paymentVerified === true;
+      const settlementRecord = settlement as unknown as Record<string, unknown>;
+      const settlementSucceeded = settlementRecord.success === true;
+      const network =
+        typeof settlementRecord.network === "string"
+          ? settlementRecord.network.slice(0, 100)
+          : null;
+      const transaction =
+        typeof settlementRecord.transaction === "string"
+          ? settlementRecord.transaction.slice(0, 200)
+          : null;
+
+      if (trace) {
+        trace.state.paymentVerified = true;
+        trace.state.settlementAttempted = true;
+        trace.state.settlementSucceeded = settlementSucceeded;
+        trace.state.settlementNetwork = network;
+        trace.state.settlementTransaction = transaction;
+      }
+
+      if (!paymentWasAlreadyVerified) {
+        logMcpLifecycle("mcp_payment_verified", {
+          toolName: expectedToolName,
+          recoveredFromSettlement: true,
+        });
+      }
+
+      logMcpLifecycle("mcp_payment_settled", {
+        toolName: expectedToolName,
+        settlementSucceeded,
+        network,
+        transaction,
+      });
+    },
+  };
+}
 
 const analyzeUrlInput = z.object({
   url: z.string().url().max(2048).describe("URL público HTTP ou HTTPS"),
@@ -318,6 +438,14 @@ const analyzeUrlInput = z.object({
     .max(500)
     .optional()
     .describe("Objetivo opcional da análise"),
+});
+
+const consultInput = z.object({
+  prompt: z
+    .string()
+    .min(1)
+    .max(4000)
+    .describe("Pergunta ou instrução para a IA"),
 });
 
 const verifyConditionsInput = z.object({
@@ -334,6 +462,21 @@ const verifyConditionsInput = z.object({
     .optional()
     .describe("Contexto opcional para interpretar as condições"),
 });
+
+const mcpPreflightInput = z.discriminatedUnion("toolName", [
+  z.object({
+    toolName: z.literal("consultar_ia"),
+    arguments: consultInput,
+  }),
+  z.object({
+    toolName: z.literal("analisar_url"),
+    arguments: analyzeUrlInput,
+  }),
+  z.object({
+    toolName: z.literal("verificar_condicoes"),
+    arguments: verifyConditionsInput,
+  }),
+]);
 
 const conversionFeedbackInput = z.object({
   journeyId: z.string().regex(JOURNEY_ID_PATTERN),
@@ -412,12 +555,22 @@ async function askOpenAI(
       cachedInputTokens * 0.025 +
       outputTokens * 2) /
     1_000_000;
+  const trace = requestContext.getStore();
 
   console.log(
     JSON.stringify({
       timestamp: new Date().toISOString(),
       level: "info",
       event: "openai_usage",
+      requestId: trace?.requestId ?? null,
+      railwayRequestId: trace?.railwayRequestId ?? null,
+      railwayEdge: trace?.railwayEdge ?? null,
+      requestStartUnixMs: trace?.requestStartUnixMs ?? null,
+      journeyId: trace?.journeyId ?? null,
+      journeyIdSource: trace?.journeyIdSource ?? null,
+      sourceFingerprint: trace?.sourceFingerprint ?? null,
+      clientFingerprint: trace?.clientFingerprint ?? null,
+      userAgent: trace?.userAgent ?? null,
       operation,
       maxOutputTokens,
       model: OPENAI_MODEL,
@@ -731,7 +884,7 @@ const paidAnalyzeRequirements =
     payTo: PAY_TO,
   });
 
-  const paidVerifyRequirements =
+const paidVerifyRequirements =
   await paymentServer.buildPaymentRequirements({
     scheme: "exact",
     price: VERIFY_PRICE,
@@ -739,11 +892,15 @@ const paidAnalyzeRequirements =
     payTo: PAY_TO,
   });
 
+// CDP validates an MCP Bazaar resource as a public HTTPS server URL. The
+// current @x402/mcp wrapper derives hook context from that URL, so each wrapper
+// also receives a fixed hook name while its Bazaar declaration carries the
+// canonical toolName.
 const paidConsultTool = createPaymentWrapper(paymentServer, {
   accepts: paidConsultRequirements,
-  hooks: mcpPaymentHooks,
+  hooks: createMcpPaymentHooks("consultar_ia"),
   resource: {
-    url: "mcp://tool/consultar_ia",
+    url: PUBLIC_MCP_SERVER_URL,
     description: "Consulta paga à OpenAI.",
     serviceName: "Diogo AI Service",
     tags: ["ai", "openai"],
@@ -765,9 +922,9 @@ const paidConsultTool = createPaymentWrapper(paymentServer, {
 
 const paidAnalyzeUrlTool = createPaymentWrapper(paymentServer, {
   accepts: paidAnalyzeRequirements,
-  hooks: mcpPaymentHooks,
+  hooks: createMcpPaymentHooks("analisar_url"),
   resource: {
-    url: "mcp://tool/analisar_url",
+    url: PUBLIC_MCP_SERVER_URL,
     description: "Análise paga de uma página web pública.",
     serviceName: "Diogo AI Service",
     tags: ["ai", "url-analysis", "research"],
@@ -790,9 +947,9 @@ const paidAnalyzeUrlTool = createPaymentWrapper(paymentServer, {
 
 const paidVerifyConditionsTool = createPaymentWrapper(paymentServer, {
   accepts: paidVerifyRequirements,
-  hooks: mcpPaymentHooks,
+  hooks: createMcpPaymentHooks("verificar_condicoes"),
   resource: {
-    url: "mcp://tool/verificar_condicoes",
+    url: PUBLIC_MCP_SERVER_URL,
     description:
       "Verifica se uma página pública cumpre condições concretas e devolve decisão com provas.",
     serviceName: "Diogo AI Service",
@@ -962,9 +1119,7 @@ const handler = createMcpHandler(() => {
     {
       title: "Consultar IA",
       description: "Envia uma pergunta para a OpenAI e devolve a resposta.",
-      inputSchema: z.object({
-        prompt: z.string().min(1).max(4000).describe("Pergunta ou instrução para a IA"),
-      }),
+      inputSchema: consultInput,
     },
     paidConsultToolV2(async ({ prompt }) => {
       try {
@@ -1305,6 +1460,43 @@ function getSafeHeader(value: string | undefined, maxLength: number): string | n
   return value.replace(/[\u0000-\u001f\u007f]/g, "?").slice(0, maxLength);
 }
 
+function normalizeSourceAddress(value: string | undefined): string | null {
+  const candidate = value?.split(",", 1)[0]?.trim();
+  if (!candidate) {
+    return null;
+  }
+
+  const bracketed = candidate.match(/^\[([^\]]+)\](?::\d+)?$/)?.[1];
+  const withoutPort = candidate.match(/^(\d+\.\d+\.\d+\.\d+):\d+$/)?.[1];
+  const normalized = (bracketed ?? withoutPort ?? candidate)
+    .split("%", 1)[0]
+    ?.toLowerCase();
+
+  return normalized && isIP(normalized) !== 0 ? normalized : null;
+}
+
+function getRequestSource(req: {
+  get(name: string): string | undefined;
+  ip: string | undefined;
+  socket: { remoteAddress: string | undefined };
+}): string {
+  return (
+    normalizeSourceAddress(req.get("x-real-ip")) ??
+    normalizeSourceAddress(req.ip) ??
+    normalizeSourceAddress(req.socket.remoteAddress) ??
+    "unknown"
+  );
+}
+
+function getUnixMillisecondsHeader(value: string | undefined): number | null {
+  if (!value || !/^\d{10,16}$/.test(value)) {
+    return null;
+  }
+
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
 function classifyExecutionError(error: unknown): string {
   const message = error instanceof Error ? error.message.toLowerCase() : "";
 
@@ -1434,7 +1626,15 @@ const safeJsonErrorHandler: ErrorRequestHandler = (error, req, res, next) => {
     res.locals.journeyId ?? inboundJourneyId ?? randomUUID(),
   );
   const userAgent = getSafeHeader(req.get("user-agent"), 300);
-  const source = req.ip || req.socket.remoteAddress || "unknown";
+  const source = getRequestSource(req);
+  const railwayRequestId = getSafeHeader(
+    req.get("x-railway-request-id"),
+    200,
+  );
+  const railwayEdge = getSafeHeader(req.get("x-railway-edge"), 50);
+  const requestStartUnixMs = getUnixMillisecondsHeader(
+    req.get("x-request-start"),
+  );
 
   if (!res.headersSent) {
     res.setHeader("x-request-id", requestId);
@@ -1446,6 +1646,9 @@ const safeJsonErrorHandler: ErrorRequestHandler = (error, req, res, next) => {
     level: "info",
     event: "request_parse_error",
     requestId,
+    railwayRequestId,
+    railwayEdge,
+    requestStartUnixMs,
     journeyId,
     journeyIdSource: inboundJourneyId ? "client" : "server",
     sourceFingerprint: getSafeFingerprint(source),
@@ -1473,7 +1676,7 @@ const safeJsonErrorHandler: ErrorRequestHandler = (error, req, res, next) => {
   });
 };
 
-const app = createMcpExpressApp({ host: HOST, allowedHosts: ['localhost', '127.0.0.1', 'healthcheck.railway.app', process.env.RAILWAY_PUBLIC_DOMAIN ?? 'mcp-x402-production.up.railway.app'] });
+const app = createMcpExpressApp({ host: HOST, allowedHosts: ['localhost', '127.0.0.1', 'healthcheck.railway.app', RAILWAY_PUBLIC_DOMAIN ?? publicMcpUrl.hostname] });
 app.set('trust proxy', 1);
 app.use(helmet());
 app.use((req, res, next) => {
@@ -1482,13 +1685,24 @@ app.use((req, res, next) => {
   const inboundJourneyId = getInboundJourneyId(req.get("x-journey-id"));
   const journeyId = inboundJourneyId ?? randomUUID();
   const userAgent = getSafeHeader(req.get("user-agent"), 300);
-  const source = req.ip || req.socket.remoteAddress || "unknown";
+  const source = getRequestSource(req);
+  const railwayRequestId = getSafeHeader(
+    req.get("x-railway-request-id"),
+    200,
+  );
+  const railwayEdge = getSafeHeader(req.get("x-railway-edge"), 50);
+  const requestStartUnixMs = getUnixMillisecondsHeader(
+    req.get("x-request-start"),
+  );
   const sourceFingerprint = getSafeFingerprint(source);
   const clientFingerprint = getSafeFingerprint(`${source}\0${userAgent ?? ""}`);
   const mcpTraceState = createMcpTraceState();
   let responseFinished = false;
 
   res.locals.requestId = requestId;
+  res.locals.railwayRequestId = railwayRequestId;
+  res.locals.railwayEdge = railwayEdge;
+  res.locals.requestStartUnixMs = requestStartUnixMs;
   res.locals.journeyId = journeyId;
   res.locals.journeyIdSource = inboundJourneyId ? "client" : "server";
   res.locals.sourceFingerprint = sourceFingerprint;
@@ -1564,6 +1778,9 @@ app.use((req, res, next) => {
       level: "info",
       event: "http_request",
       requestId,
+      railwayRequestId,
+      railwayEdge,
+      requestStartUnixMs,
       journeyId,
       journeyIdSource: res.locals.journeyIdSource,
       sourceFingerprint,
@@ -1685,6 +1902,9 @@ app.use((req, res, next) => {
       level: "warn",
       event: "request_aborted",
       requestId,
+      railwayRequestId,
+      railwayEdge,
+      requestStartUnixMs,
       journeyId,
       sourceFingerprint,
       clientFingerprint,
@@ -1695,7 +1915,17 @@ app.use((req, res, next) => {
     }));
   });
 
-  next();
+  requestContext.run({
+    requestId,
+    railwayRequestId,
+    railwayEdge,
+    requestStartUnixMs,
+    journeyId,
+    journeyIdSource: inboundJourneyId ? "client" : "server",
+    sourceFingerprint,
+    clientFingerprint,
+    userAgent,
+  }, next);
 });
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, limit: 100, standardHeaders: "draft-8", legacyHeaders: false, message: { error: "Too many requests. Try again later." } }));
 const nodeHandler = toNodeHandler(handler, {
@@ -1827,6 +2057,8 @@ app.get("/health", (_req, res) => {
     ok: true,
     provider: "openai",
     model: OPENAI_MODEL,
+    version: SERVICE_VERSION,
+    publicMcpServerUrl: PUBLIC_MCP_SERVER_URL,
     tools: ["consultar_ia", "analisar_url", "verificar_condicoes"],
     paidEndpoint: {
       method: "POST",
@@ -1841,8 +2073,6 @@ app.get("/health", (_req, res) => {
     ],
   });
 });
-
-const PUBLIC_SERVICE_URL = "https://mcp-x402-production.up.railway.app";
 
 app.get("/", (_req, res) => {
   res.json({
@@ -1862,6 +2092,7 @@ app.get("/", (_req, res) => {
       verifyConditions: `POST ${PUBLIC_SERVICE_URL}/verify-conditions`,
       preflightAnalyze: `POST ${PUBLIC_SERVICE_URL}/preflight/analyze`,
       preflightVerifyConditions: `POST ${PUBLIC_SERVICE_URL}/preflight/verify-conditions`,
+      preflightMcp: `POST ${PUBLIC_SERVICE_URL}/preflight/mcp`,
       feedback: `POST ${PUBLIC_SERVICE_URL}/feedback`,
       health: `${PUBLIC_SERVICE_URL}/health`,
     },
@@ -2122,6 +2353,49 @@ app.get("/openapi.json", (_req, res) => {
           },
         },
       },
+      "/preflight/mcp": {
+        post: {
+          summary: "Valida gratuitamente uma chamada MCP paga",
+          description:
+            "Não cobra nem executa a ferramenta. Valida toolName e arguments, devolvendo o endpoint MCP HTTPS, preço, rede e instruções para preservar o journeyId.",
+          tags: ["Preflight", "MCP"],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["toolName", "arguments"],
+                  properties: {
+                    toolName: {
+                      type: "string",
+                      enum: [
+                        "consultar_ia",
+                        "analisar_url",
+                        "verificar_condicoes",
+                      ],
+                    },
+                    arguments: { type: "object" },
+                  },
+                },
+                example: {
+                  toolName: "consultar_ia",
+                  arguments: { prompt: "Responde apenas: MCP OK" },
+                },
+              },
+            },
+          },
+          responses: {
+            "200": {
+              description:
+                "Ferramenta e argumentos válidos; devolve URL MCP, preço e próximo passo.",
+            },
+            "400": {
+              description: "Ferramenta ou argumentos inválidos.",
+            },
+          },
+        },
+      },
       "/mcp": {
         post: {
           summary: "Endpoint Model Context Protocol",
@@ -2152,6 +2426,7 @@ app.get("/agents.json", (_req, res) => {
       analyze: `${PUBLIC_SERVICE_URL}/analyze`,
       preflightAnalyze: `${PUBLIC_SERVICE_URL}/preflight/analyze`,
       preflightVerifyConditions: `${PUBLIC_SERVICE_URL}/preflight/verify-conditions`,
+      preflightMcp: `${PUBLIC_SERVICE_URL}/preflight/mcp`,
       feedback: `${PUBLIC_SERVICE_URL}/feedback`,
       health: `${PUBLIC_SERVICE_URL}/health`,
     },
@@ -2187,6 +2462,7 @@ app.get("/llms.txt", (_req, res) => {
 - Verificação paga: POST ${PUBLIC_SERVICE_URL}/verify-conditions — decisão por condição, provas, verificationId e pageHash SHA-256
 - Pré-validação gratuita da análise: POST ${PUBLIC_SERVICE_URL}/preflight/analyze — valida o JSON, informa preço e explica o próximo passo sem cobrar
 - Pré-validação gratuita da verificação: POST ${PUBLIC_SERVICE_URL}/preflight/verify-conditions — valida URL e condições, informa preço e explica o próximo passo sem cobrar
+- Pré-validação gratuita do MCP: POST ${PUBLIC_SERVICE_URL}/preflight/mcp — valida ferramenta e argumentos e preserva o journeyId antes do desafio x402
 - Feedback opcional da integração: POST ${PUBLIC_SERVICE_URL}/feedback — aceita apenas etapa e motivo normalizados, sem texto livre
 - Estado: GET ${PUBLIC_SERVICE_URL}/health
 - Especificação OpenAPI: GET ${PUBLIC_SERVICE_URL}/openapi.json
@@ -2204,6 +2480,68 @@ Content-Type: application/json
 {"url":"https://example.com","objetivo":"Resumir factos, riscos e ações recomendadas."}
 `
   );
+});
+
+app.post("/preflight/mcp", (req, res) => {
+  const parsed = mcpPreflightInput.safeParse(req.body);
+  const journeyId = String(res.locals.journeyId);
+
+  if (!parsed.success) {
+    res.status(400).json({
+      ready: false,
+      target: "/mcp",
+      reason: "invalid_input",
+      message:
+        "Send a supported toolName and its complete arguments object.",
+      messagePt:
+        "Envie um toolName suportado e o respetivo objeto arguments completo.",
+      supportedTools: [
+        "consultar_ia",
+        "analisar_url",
+        "verificar_condicoes",
+      ],
+      journey: {
+        id: journeyId,
+        header: "x-journey-id",
+        nextRequest: "Repeat this value in the x-journey-id header.",
+      },
+      details: z.treeifyError(parsed.error),
+    });
+    return;
+  }
+
+  const price =
+    parsed.data.toolName === "consultar_ia"
+      ? CONSULT_PRICE
+      : parsed.data.toolName === "analisar_url"
+        ? ANALYZE_PRICE
+        : VERIFY_PRICE;
+
+  res.json({
+    ready: true,
+    target: {
+      transport: "streamable-http",
+      url: PUBLIC_MCP_SERVER_URL,
+      toolName: parsed.data.toolName,
+    },
+    validated: {
+      operation: parsed.data.toolName,
+      argumentKeys: Object.keys(parsed.data.arguments).sort(),
+    },
+    journey: {
+      id: journeyId,
+      header: "x-journey-id",
+      nextRequest: "Repeat this value on every MCP request in this purchase.",
+    },
+    payment: {
+      protocol: "x402",
+      network: X402_NETWORK,
+      currency: "USDC",
+      price,
+      nextStep:
+        "Connect to the MCP URL, call the validated tool with the same arguments, read the x402 challenge, authorize it, and retry with the payment payload.",
+    },
+  });
 });
 
 app.post("/preflight/analyze", (req, res) => {
@@ -2377,6 +2715,9 @@ app.post("/feedback", (req, res) => {
     level: "info",
     event: "conversion_feedback",
     requestId: res.locals.requestId,
+    railwayRequestId: res.locals.railwayRequestId,
+    railwayEdge: res.locals.railwayEdge,
+    requestStartUnixMs: res.locals.requestStartUnixMs,
     journeyId: parsed.data.journeyId,
     reason: parsed.data.reason,
     stage: parsed.data.stage ?? null,
@@ -2434,6 +2775,18 @@ app.all("/mcp", (req, res) => {
 
   const trace: McpRequestTrace = {
     requestId: String(res.locals.requestId),
+    railwayRequestId:
+      typeof res.locals.railwayRequestId === "string"
+        ? res.locals.railwayRequestId
+        : null,
+    railwayEdge:
+      typeof res.locals.railwayEdge === "string"
+        ? res.locals.railwayEdge
+        : null,
+    requestStartUnixMs:
+      typeof res.locals.requestStartUnixMs === "number"
+        ? res.locals.requestStartUnixMs
+        : null,
     journeyId: String(res.locals.journeyId),
     journeyIdSource:
       res.locals.journeyIdSource === "client" ? "client" : "server",
@@ -2451,6 +2804,9 @@ app.all("/mcp", (req, res) => {
       timestamp: new Date().toISOString(),
       event: "mcp_rejection",
       requestId: trace.requestId,
+      railwayRequestId: trace.railwayRequestId,
+      railwayEdge: trace.railwayEdge,
+      requestStartUnixMs: trace.requestStartUnixMs,
       journeyId: trace.journeyId,
       journeyIdSource: trace.journeyIdSource,
       sourceFingerprint: trace.sourceFingerprint,

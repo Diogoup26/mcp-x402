@@ -7,6 +7,9 @@ import { randomUUID } from "node:crypto";
 const MCP_URL =
   process.env.MCP_ENDPOINT ??
   "https://mcp-x402-production.up.railway.app/mcp";
+const SERVICE_ORIGIN = new URL(MCP_URL).origin;
+const SERVICE_VERSION = "1.2.3";
+const USER_AGENT = `Diogo-MCP-Buyer/${SERVICE_VERSION}`;
 const NETWORK = "eip155:8453";
 const MAX_PAYMENT = 50_000n;
 const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
@@ -78,6 +81,53 @@ if (!privateKey || !/^0x[0-9a-fA-F]{64}$/.test(privateKey)) {
 
 const signer = privateKeyToAccount(privateKey as `0x${string}`);
 
+async function prepareJourney(): Promise<void> {
+  const headers = {
+    Accept: "application/json",
+    "User-Agent": USER_AGENT,
+    "x-journey-id": JOURNEY_ID,
+  };
+  const discovery = await fetch(
+    `${SERVICE_ORIGIN}/.well-known/x402`,
+    {
+      headers,
+      signal: AbortSignal.timeout(30_000),
+    },
+  );
+  if (!discovery.ok) {
+    throw new Error(`Descoberta falhou com HTTP ${discovery.status}.`);
+  }
+
+  const preflight = await fetch(`${SERVICE_ORIGIN}/preflight/mcp`, {
+    method: "POST",
+    headers: {
+      ...headers,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      toolName: tool,
+      arguments: toolArguments,
+    }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  const result = await preflight.json() as {
+    ready?: unknown;
+    journey?: { id?: unknown };
+  };
+  if (
+    !preflight.ok ||
+    result.ready !== true ||
+    result.journey?.id !== JOURNEY_ID
+  ) {
+    throw new Error(
+      `Preflight MCP falhou com HTTP ${preflight.status}.`,
+    );
+  }
+
+  console.log("DESCOBERTA MCP: success");
+  console.log("PREFLIGHT MCP: ready");
+}
+
 const client = createx402MCPClient({
   name: "mcp-x402-buyer",
   version: "1.0.0",
@@ -129,7 +179,7 @@ const client = createx402MCPClient({
 const transport = new StreamableHTTPClientTransport(new URL(MCP_URL), {
   requestInit: {
     headers: {
-      "User-Agent": "Diogo-MCP-Buyer/1.2.2",
+      "User-Agent": USER_AGENT,
       "x-journey-id": JOURNEY_ID,
     },
   },
@@ -138,6 +188,7 @@ let connected = false;
 
 try {
   console.log("JORNADA MCP:", JOURNEY_ID);
+  await prepareJourney();
   await client.connect(
     transport as unknown as Parameters<typeof client.connect>[0],
   );
