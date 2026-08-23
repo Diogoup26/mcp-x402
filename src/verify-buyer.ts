@@ -1,6 +1,11 @@
 ﻿import { x402Client, wrapFetchWithPayment } from "@x402/fetch";
 import { registerExactEvmScheme } from "@x402/evm/exact/client";
 import { privateKeyToAccount } from "viem/accounts";
+import { randomUUID } from "node:crypto";
+
+const JOURNEY_ID =
+  process.env.JOURNEY_ID ??
+  `Diogo-Verify-${Date.now()}-${randomUUID().replace(/-/g, "")}`;
 
 const [url, ...objectiveParts] = process.argv.slice(2);
 const condicao = objectiveParts.join(" ").trim();
@@ -32,6 +37,8 @@ const response = await fetchWithPayment(
     headers: {
       "Content-Type": "application/json",
       Accept: "application/json",
+      "User-Agent": "Diogo-REST-Verify/1.2.2",
+      "x-journey-id": JOURNEY_ID,
     },
     body: JSON.stringify({
       url,
@@ -41,6 +48,8 @@ const response = await fetchWithPayment(
 );
 
 const result = await response.text();
+
+console.log("JORNADA:", JOURNEY_ID);
 
 const paymentResponse = response.headers.get("payment-response");
 

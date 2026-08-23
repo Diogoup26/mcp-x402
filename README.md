@@ -118,12 +118,14 @@ This is designed for agents that need an evidence-based decision before taking t
 | `HOST` | No | Listening host. Defaults to `0.0.0.0`. |
 | `PORT` | No | Listening port. Defaults to `3000`. |
 | `RAILWAY_PUBLIC_DOMAIN` | Railway | Automatically supplied by Railway. |
+| `OBSERVABILITY_SALT` | Recommended | Stable secret salt used only to pseudonymize source/client fingerprints across restarts. |
 
 ### Local Buyer
 
 | Variable | Required | Description |
 | --- | --- | --- |
 | `EVM_PRIVATE_KEY` | Yes | Private key of the Base mainnet buyer wallet. Never commit this value. |
+| `JOURNEY_ID` | No | Existing correlation ID to reuse; otherwise the buyer generates one. |
 
 Example local `.env.test` file:
 
@@ -239,6 +241,36 @@ The MCP buyer never prints the private key and rejects any payment that:
 - is not on Base mainnet;
 - does not use the configured Base USDC contract;
 - exceeds $0.05 USDC.
+
+## Controlled Smoke Test (No Payment)
+
+After deployment, validate discovery, preflight, HTTP 402 challenges, HTTP
+method handling, MCP initialization, tool discovery and the MCP x402 challenge:
+
+```bash
+npm run build
+npm run smoke
+```
+
+Use `SERVICE_URL` to target another deployment. The test uses one persistent
+`x-journey-id`, sends `User-Agent: Diogo-Smoke/1.2.2`, and never creates or
+signs a payment.
+
+The three payment buyers also send a persistent journey ID. Set `JOURNEY_ID`
+to reuse an existing journey; otherwise each buyer creates and prints one.
+
+## Funnel Observability
+
+The server emits structured events for MCP tool attempts, x402 challenges,
+payment verification, execution, settlement and final tool outcome. It does
+not log tool arguments or payment payloads. Settlement logs include the public
+network and transaction identifier so completed purchases can be counted and
+deduplicated.
+
+Rejected MCP requests include safe protocol diagnostics such as method,
+content type, `Accept`, JSON-RPC shape and the SDK error classification. All
+events include the request and journey correlation fields when available.
+
 ## Deployment
 
 The `main` branch is connected to Railway. Every successful push triggers a new deployment. Railway uses:

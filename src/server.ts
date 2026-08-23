@@ -1,5 +1,6 @@
 ﻿import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
 import { createMcpExpressApp } from "@modelcontextprotocol/express";
 import { toNodeHandler } from "@modelcontextprotocol/node";
@@ -7,7 +8,11 @@ import { createMcpHandler, McpServer, type ServerContext } from "@modelcontextpr
 import { createCdpFacilitatorClient } from "@coinbase/cdp-sdk/x402";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { paymentMiddleware, x402ResourceServer } from "@x402/express";
-import { createPaymentWrapper, type PaymentWrappedHandler } from "@x402/mcp";
+import {
+  createPaymentWrapper,
+  type PaymentWrappedHandler,
+  type PaymentWrapperConfig,
+} from "@x402/mcp";
 import { declareDiscoveryExtension } from '@x402/extensions/bazaar';
 import { load } from "cheerio";
 import OpenAI from "openai";
@@ -26,6 +31,7 @@ const X402_NETWORK = (process.env.X402_NETWORK ?? "eip155:84532") as `${string}:
 const CONSULT_PRICE = "$0.02";
 const ANALYZE_PRICE = "$0.05";
 const VERIFY_PRICE = "$0.05";
+const SERVICE_VERSION = "1.2.2";
 const X402_FACILITATOR_URL = "https://x402.org/facilitator";
 const DISCOVERY_PATHS = new Set([
   "/",
@@ -43,7 +49,8 @@ const PREFLIGHT_PATHS = new Set([
 ]);
 
 const JOURNEY_ID_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
-const OBSERVABILITY_SALT = randomUUID();
+const OBSERVABILITY_SALT =
+  process.env.OBSERVABILITY_SALT?.trim() || randomUUID();
 const FEEDBACK_REASONS = [
   "research_only",
   "no_wallet",
@@ -55,6 +62,254 @@ const FEEDBACK_REASONS = [
   "integration_error",
   "other",
 ] as const;
+
+type McpTraceState = {
+  jsonRpcMethod: string | null;
+  toolName: string | null;
+  paymentPayloadPresent: boolean | null;
+  paymentVerified: boolean;
+  challengeIssued: boolean;
+  paymentErrorCategory: string | null;
+  executionStartedAt: number | null;
+  executionFinishedAt: number | null;
+  executionSucceeded: boolean | null;
+  settlementAttempted: boolean;
+  settlementSucceeded: boolean | null;
+  settlementNetwork: string | null;
+  settlementTransaction: string | null;
+  handlerErrorCode: string | number | null;
+  handlerErrorMessage: string | null;
+};
+
+type McpRequestTrace = {
+  requestId: string;
+  journeyId: string;
+  journeyIdSource: "client" | "server";
+  sourceFingerprint: string;
+  clientFingerprint: string;
+  userAgent: string | null;
+  state: McpTraceState;
+};
+
+const mcpRequestContext = new AsyncLocalStorage<McpRequestTrace>();
+
+function createMcpTraceState(): McpTraceState {
+  return {
+    jsonRpcMethod: null,
+    toolName: null,
+    paymentPayloadPresent: null,
+    paymentVerified: false,
+    challengeIssued: false,
+    paymentErrorCategory: null,
+    executionStartedAt: null,
+    executionFinishedAt: null,
+    executionSucceeded: null,
+    settlementAttempted: false,
+    settlementSucceeded: null,
+    settlementNetwork: null,
+    settlementTransaction: null,
+    handlerErrorCode: null,
+    handlerErrorMessage: null,
+  };
+}
+
+function getSafeErrorDetails(error: unknown): {
+  name: string;
+  code: string | number | null;
+  message: string;
+} {
+  const candidate = error as {
+    name?: unknown;
+    code?: unknown;
+    message?: unknown;
+  };
+  const code =
+    typeof candidate?.code === "string" ||
+    typeof candidate?.code === "number"
+      ? candidate.code
+      : null;
+  const rawMessage =
+    typeof candidate?.message === "string"
+      ? candidate.message
+      : String(error);
+
+  return {
+    name:
+      typeof candidate?.name === "string"
+        ? candidate.name.slice(0, 100)
+        : "Error",
+    code,
+    message: rawMessage
+      .replace(/[\u0000-\u001f\u007f]/g, "?")
+      .slice(0, 500),
+  };
+}
+
+function logMcpLifecycle(
+  event: string,
+  details: Record<string, unknown> = {},
+  level: "info" | "warn" | "error" = "info",
+): void {
+  const trace = mcpRequestContext.getStore();
+
+  console.log(JSON.stringify({
+    timestamp: new Date().toISOString(),
+    level,
+    event,
+    requestId: trace?.requestId ?? null,
+    journeyId: trace?.journeyId ?? null,
+    journeyIdSource: trace?.journeyIdSource ?? null,
+    sourceFingerprint: trace?.sourceFingerprint ?? null,
+    clientFingerprint: trace?.clientFingerprint ?? null,
+    userAgent: trace?.userAgent ?? null,
+    ...details,
+  }));
+}
+
+function recordMcpHandlerError(error: unknown): void {
+  const details = getSafeErrorDetails(error);
+  const trace = mcpRequestContext.getStore();
+
+  if (trace) {
+    trace.state.handlerErrorCode = details.code;
+    trace.state.handlerErrorMessage = details.message;
+  }
+
+  logMcpLifecycle(
+    "mcp_handler_error",
+    {
+      errorName: details.name,
+      errorCode: details.code,
+      errorMessage: details.message,
+      jsonRpcMethod: trace?.state.jsonRpcMethod ?? null,
+    },
+    "warn",
+  );
+}
+
+function recordMcpAdapterError(error: unknown): void {
+  const details = getSafeErrorDetails(error);
+  const trace = mcpRequestContext.getStore();
+
+  if (trace) {
+    trace.state.handlerErrorCode = details.code;
+    trace.state.handlerErrorMessage = details.message;
+  }
+
+  logMcpLifecycle(
+    "mcp_adapter_error",
+    {
+      errorName: details.name,
+      errorCode: details.code,
+      errorMessage: details.message,
+      jsonRpcMethod: trace?.state.jsonRpcMethod ?? null,
+    },
+    "error",
+  );
+}
+
+function getPaymentErrorCategory(result: unknown): string | null {
+  if (result === null || typeof result !== "object") {
+    return null;
+  }
+
+  const structuredContent = (result as {
+    structuredContent?: unknown;
+  }).structuredContent;
+
+  if (
+    structuredContent === null ||
+    typeof structuredContent !== "object" ||
+    Array.isArray(structuredContent)
+  ) {
+    return null;
+  }
+
+  const error = (structuredContent as { error?: unknown }).error;
+  if (typeof error !== "string") {
+    return null;
+  }
+
+  const normalized = error.toLowerCase();
+  if (normalized.includes("settlement")) return "settlement_failed";
+  if (normalized.includes("matching payment")) return "requirements_mismatch";
+  if (normalized.includes("extension")) return "extension_invalid";
+  if (normalized.includes("verification")) return "verification_failed";
+  if (normalized.includes("payment required")) return "payment_required";
+  return "payment_rejected_other";
+}
+
+const mcpPaymentHooks: NonNullable<PaymentWrapperConfig["hooks"]> = {
+  onBeforeExecution: ({ toolName }) => {
+    const trace = mcpRequestContext.getStore();
+    const now = Date.now();
+
+    if (trace) {
+      trace.state.toolName = toolName;
+      trace.state.paymentVerified = true;
+      trace.state.executionStartedAt = now;
+    }
+
+    logMcpLifecycle("mcp_payment_verified", { toolName });
+    logMcpLifecycle("mcp_execution_started", { toolName });
+  },
+  onAfterExecution: ({ toolName, result }) => {
+    const trace = mcpRequestContext.getStore();
+    const executionSucceeded = result.isError !== true;
+    const now = Date.now();
+
+    if (trace) {
+      trace.state.executionFinishedAt = now;
+      trace.state.executionSucceeded = executionSucceeded;
+    }
+
+    logMcpLifecycle("mcp_execution_finished", {
+      toolName,
+      executionSucceeded,
+      executionMs:
+        trace?.state.executionStartedAt !== null &&
+        trace?.state.executionStartedAt !== undefined
+          ? now - trace.state.executionStartedAt
+          : null,
+    });
+  },
+  onAfterSettlement: ({ toolName, settlement }) => {
+    const trace = mcpRequestContext.getStore();
+    const paymentWasAlreadyVerified = trace?.state.paymentVerified === true;
+    const settlementRecord = settlement as unknown as Record<string, unknown>;
+    const settlementSucceeded = settlementRecord.success === true;
+    const network =
+      typeof settlementRecord.network === "string"
+        ? settlementRecord.network.slice(0, 100)
+        : null;
+    const transaction =
+      typeof settlementRecord.transaction === "string"
+        ? settlementRecord.transaction.slice(0, 200)
+        : null;
+
+    if (trace) {
+      trace.state.paymentVerified = true;
+      trace.state.settlementAttempted = true;
+      trace.state.settlementSucceeded = settlementSucceeded;
+      trace.state.settlementNetwork = network;
+      trace.state.settlementTransaction = transaction;
+    }
+
+    if (!paymentWasAlreadyVerified) {
+      logMcpLifecycle("mcp_payment_verified", {
+        toolName,
+        recoveredFromSettlement: true,
+      });
+    }
+
+    logMcpLifecycle("mcp_payment_settled", {
+      toolName,
+      settlementSucceeded,
+      network,
+      transaction,
+    });
+  },
+};
 
 const analyzeUrlInput = z.object({
   url: z.string().url().max(2048).describe("URL público HTTP ou HTTPS"),
@@ -486,6 +741,7 @@ const paidAnalyzeRequirements =
 
 const paidConsultTool = createPaymentWrapper(paymentServer, {
   accepts: paidConsultRequirements,
+  hooks: mcpPaymentHooks,
   resource: {
     url: "mcp://tool/consultar_ia",
     description: "Consulta paga à OpenAI.",
@@ -509,6 +765,7 @@ const paidConsultTool = createPaymentWrapper(paymentServer, {
 
 const paidAnalyzeUrlTool = createPaymentWrapper(paymentServer, {
   accepts: paidAnalyzeRequirements,
+  hooks: mcpPaymentHooks,
   resource: {
     url: "mcp://tool/analisar_url",
     description: "Análise paga de uma página web pública.",
@@ -533,6 +790,7 @@ const paidAnalyzeUrlTool = createPaymentWrapper(paymentServer, {
 
 const paidVerifyConditionsTool = createPaymentWrapper(paymentServer, {
   accepts: paidVerifyRequirements,
+  hooks: mcpPaymentHooks,
   resource: {
     url: "mcp://tool/verificar_condicoes",
     description:
@@ -572,6 +830,7 @@ const paidVerifyConditionsTool = createPaymentWrapper(paymentServer, {
 });
 
 function adaptPaymentWrapperForMcpV2(
+  toolName: string,
   wrapper: ReturnType<typeof createPaymentWrapper>,
 ) {
   return <TArgs extends Record<string, unknown>>(
@@ -579,26 +838,123 @@ function adaptPaymentWrapperForMcpV2(
   ) => {
     const callback = wrapper(handler);
 
-    return (args: TArgs, context: ServerContext) =>
-      callback(args, {
-        ...context,
-        _meta: context.mcpReq._meta,
+    return async (args: TArgs, context: ServerContext) => {
+      const trace = mcpRequestContext.getStore();
+      const meta = context.mcpReq._meta;
+      const paymentPayloadPresent = Boolean(
+        meta &&
+        typeof meta === "object" &&
+        (meta as Record<string, unknown>)["x402/payment"],
+      );
+
+      if (trace) {
+        trace.state.toolName = toolName;
+        trace.state.paymentPayloadPresent = paymentPayloadPresent;
+      }
+
+      logMcpLifecycle("mcp_tool_attempt", {
+        toolName,
+        paymentPayloadPresent,
       });
+
+      let result: Awaited<ReturnType<typeof callback>>;
+      try {
+        result = await callback(args, {
+          ...context,
+          _meta: meta,
+        });
+      } catch (error) {
+        const errorDetails = getSafeErrorDetails(error);
+        const errorCategory = trace?.state.paymentVerified
+          ? "execution_exception"
+          : paymentPayloadPresent
+            ? "payment_verification_exception"
+            : "challenge_generation_exception";
+
+        if (trace) {
+          trace.state.paymentErrorCategory = errorCategory;
+          if (trace.state.executionStartedAt !== null) {
+            trace.state.executionFinishedAt = Date.now();
+            trace.state.executionSucceeded = false;
+          }
+        }
+
+        logMcpLifecycle(
+          "mcp_tool_error",
+          {
+            toolName,
+            paymentPayloadPresent,
+            errorCategory,
+            errorName: errorDetails.name,
+            errorCode: errorDetails.code,
+            errorMessage: errorDetails.message,
+          },
+          "error",
+        );
+        throw error;
+      }
+
+      const paymentErrorCategory = getPaymentErrorCategory(result);
+      if (trace) {
+        trace.state.paymentErrorCategory = paymentErrorCategory;
+      }
+
+      if (!paymentPayloadPresent) {
+        if (trace) trace.state.challengeIssued = true;
+        logMcpLifecycle("mcp_payment_challenge", { toolName });
+      } else if (!trace?.state.paymentVerified) {
+        logMcpLifecycle(
+          "mcp_payment_verification_failed",
+          { toolName, paymentErrorCategory },
+          "warn",
+        );
+      }
+
+      if (
+        trace?.state.paymentVerified &&
+        trace.state.executionSucceeded === true &&
+        !trace.state.settlementAttempted
+      ) {
+        trace.state.settlementAttempted = true;
+        trace.state.settlementSucceeded = false;
+        trace.state.paymentErrorCategory ??= "settlement_failed";
+        logMcpLifecycle(
+          "mcp_payment_settlement_failed",
+          { toolName },
+          "warn",
+        );
+      }
+
+      logMcpLifecycle("mcp_tool_outcome", {
+        toolName,
+        paymentPayloadPresent,
+        paymentVerified: trace?.state.paymentVerified ?? null,
+        challengeIssued: trace?.state.challengeIssued ?? null,
+        paymentErrorCategory: trace?.state.paymentErrorCategory ?? null,
+        executionSucceeded: trace?.state.executionSucceeded ?? null,
+        settlementSucceeded: trace?.state.settlementSucceeded ?? null,
+      });
+
+      return result;
+    };
   };
 }
 
 const paidConsultToolV2 =
-  adaptPaymentWrapperForMcpV2(paidConsultTool);
+  adaptPaymentWrapperForMcpV2("consultar_ia", paidConsultTool);
 const paidAnalyzeUrlToolV2 =
-  adaptPaymentWrapperForMcpV2(paidAnalyzeUrlTool);
+  adaptPaymentWrapperForMcpV2("analisar_url", paidAnalyzeUrlTool);
 
 const paidVerifyConditionsToolV2 =
-  adaptPaymentWrapperForMcpV2(paidVerifyConditionsTool);
+  adaptPaymentWrapperForMcpV2(
+    "verificar_condicoes",
+    paidVerifyConditionsTool,
+  );
 
 const handler = createMcpHandler(() => {
   const server = new McpServer({
     name: "diogo-ai-service",
-    version: "1.2.1",
+    version: SERVICE_VERSION,
   });
 
   server.registerTool(
@@ -696,6 +1052,9 @@ const handler = createMcpHandler(() => {
   );
 
   return server;
+}, {
+  legacy: "stateless",
+  onerror: recordMcpHandlerError,
 });
 
 type PaidRequestIntent =
@@ -864,6 +1223,66 @@ function getHeaderSummary(req: { get(name: string): string | undefined }): {
   };
 }
 
+function getSettlementResponseSummary(value: unknown): {
+  present: boolean;
+  parsed: boolean;
+  success: boolean | null;
+  network: string | null;
+  transaction: string | null;
+} {
+  const encoded =
+    typeof value === "string"
+      ? value
+      : Array.isArray(value) && typeof value[0] === "string"
+        ? value[0]
+        : null;
+
+  if (!encoded) {
+    return {
+      present: false,
+      parsed: false,
+      success: null,
+      network: null,
+      transaction: null,
+    };
+  }
+
+  const candidates = [
+    encoded,
+    Buffer.from(encoded, "base64").toString("utf8"),
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate) as Record<string, unknown>;
+      return {
+        present: true,
+        parsed: true,
+        success:
+          typeof parsed.success === "boolean" ? parsed.success : null,
+        network:
+          typeof parsed.network === "string"
+            ? parsed.network.slice(0, 100)
+            : null,
+        transaction:
+          typeof parsed.transaction === "string"
+            ? parsed.transaction.slice(0, 200)
+            : null,
+      };
+    } catch {
+      // Try the other supported representation.
+    }
+  }
+
+  return {
+    present: true,
+    parsed: false,
+    success: null,
+    network: null,
+    transaction: null,
+  };
+}
+
 function getInboundJourneyId(value: string | undefined): string | null {
   const candidate = value?.trim();
   return candidate && JOURNEY_ID_PATTERN.test(candidate) ? candidate : null;
@@ -928,6 +1347,7 @@ function getPaymentOutcome(input: {
   paymentVerified: boolean;
   executionSucceeded: boolean | null;
   settlementResponsePresent: boolean;
+  settlementSucceeded: boolean | null;
 }): string | null {
   if (!input.isPaidEndpoint) {
     return null;
@@ -957,6 +1377,14 @@ function getPaymentOutcome(input: {
 
   if (input.paymentVerified && input.executionSucceeded === false) {
     return "execution_failed";
+  }
+
+  if (
+    input.paymentVerified &&
+    input.executionSucceeded === true &&
+    input.settlementSucceeded === false
+  ) {
+    return "settlement_failed";
   }
 
   if (
@@ -1057,6 +1485,7 @@ app.use((req, res, next) => {
   const source = req.ip || req.socket.remoteAddress || "unknown";
   const sourceFingerprint = getSafeFingerprint(source);
   const clientFingerprint = getSafeFingerprint(`${source}\0${userAgent ?? ""}`);
+  const mcpTraceState = createMcpTraceState();
   let responseFinished = false;
 
   res.locals.requestId = requestId;
@@ -1064,6 +1493,7 @@ app.use((req, res, next) => {
   res.locals.journeyIdSource = inboundJourneyId ? "client" : "server";
   res.locals.sourceFingerprint = sourceFingerprint;
   res.locals.clientFingerprint = clientFingerprint;
+  res.locals.mcpTraceState = mcpTraceState;
   res.locals.paymentVerified = false;
   res.locals.executionSucceeded = null;
   res.setHeader("x-request-id", requestId);
@@ -1072,6 +1502,7 @@ app.use((req, res, next) => {
   res.on("finish", () => {
     responseFinished = true;
     const isDiscovery = DISCOVERY_PATHS.has(req.path);
+    const isMcpEndpoint = req.path === "/mcp";
     const isPaidEndpoint =
       req.path === "/analyze" || req.path === "/verify-conditions";
     const isPreflightEndpoint = PREFLIGHT_PATHS.has(req.path);
@@ -1085,9 +1516,11 @@ app.use((req, res, next) => {
       typeof res.locals.executionSucceeded === "boolean"
         ? res.locals.executionSucceeded
         : null;
-    const settlementResponsePresent = Boolean(
-      res.getHeader("payment-response") ?? res.getHeader("x-payment-response"),
+    const settlementResponse = getSettlementResponseSummary(
+      res.getHeader("payment-response") ??
+      res.getHeader("x-payment-response"),
     );
+    const settlementResponsePresent = settlementResponse.present;
     const paymentOutcome = getPaymentOutcome({
       isPaidEndpoint,
       requestIntent,
@@ -1096,12 +1529,29 @@ app.use((req, res, next) => {
       paymentVerified,
       executionSucceeded,
       settlementResponsePresent,
+      settlementSucceeded: settlementResponse.success,
     });
+    const mcpPaymentOutcome = !isMcpEndpoint ? null :
+      res.statusCode >= 400 ? "transport_rejected" :
+      mcpTraceState.settlementSucceeded === true ? "settled" :
+      mcpTraceState.settlementAttempted && mcpTraceState.settlementSucceeded === false ? "settlement_failed" :
+      mcpTraceState.executionSucceeded === false ? "execution_failed" :
+      mcpTraceState.paymentVerified ? "payment_verified" :
+      mcpTraceState.paymentPayloadPresent ? "verification_failed" :
+      mcpTraceState.challengeIssued ? "challenge_issued" :
+      "not_a_paid_tool_call";
     const funnelStage =
       isDiscovery ? "discovery" :
       isPreflightEndpoint && res.statusCode < 400 ? "preflight_ready" :
       isPreflightEndpoint ? "preflight_invalid" :
-      req.path === "/mcp" ? "mcp" :
+      isMcpEndpoint && res.statusCode >= 400 ? "mcp_rejection" :
+      isMcpEndpoint && mcpPaymentOutcome === "settled" ? "mcp_paid_success" :
+      isMcpEndpoint && mcpPaymentOutcome === "settlement_failed" ? "mcp_settlement_error" :
+      isMcpEndpoint && mcpPaymentOutcome === "execution_failed" ? "mcp_execution_error" :
+      isMcpEndpoint && mcpPaymentOutcome === "payment_verified" ? "mcp_payment_verified" :
+      isMcpEndpoint && mcpPaymentOutcome === "verification_failed" ? "mcp_payment_verification_failed" :
+      isMcpEndpoint && mcpPaymentOutcome === "challenge_issued" ? "mcp_x402_challenge" :
+      isMcpEndpoint ? "mcp" :
       paymentOutcome === "settled" || paymentOutcome === "success_without_settlement_header" ? "paid_success" :
       paymentOutcome === "verification_failed" || paymentOutcome === "facilitator_unavailable" || paymentOutcome === "payment_middleware_error" || paymentOutcome === "execution_failed" || paymentOutcome === "settlement_failed" ? "paid_retry_error" :
       isPaidEndpoint && res.statusCode === 402 ? "x402_challenge" :
@@ -1138,7 +1588,65 @@ app.use((req, res, next) => {
       paymentResponseHeaderPresent: isPaidEndpoint
         ? settlementResponsePresent
         : null,
+      paymentResponseParsed: isPaidEndpoint
+        ? settlementResponse.parsed
+        : null,
+      paymentSettlementSucceeded: isPaidEndpoint
+        ? settlementResponse.success
+        : null,
+      paymentSettlementNetwork: isPaidEndpoint
+        ? settlementResponse.network
+        : null,
+      paymentSettlementTransaction: isPaidEndpoint
+        ? settlementResponse.transaction
+        : null,
       paymentOutcome,
+      mcpProtocolVersion: isMcpEndpoint
+        ? getSafeHeader(req.get("mcp-protocol-version"), 100)
+        : null,
+      mcpJsonRpcMethod: isMcpEndpoint
+        ? mcpTraceState.jsonRpcMethod
+        : null,
+      mcpToolName: isMcpEndpoint ? mcpTraceState.toolName : null,
+      mcpPaymentPayloadPresent: isMcpEndpoint
+        ? mcpTraceState.paymentPayloadPresent
+        : null,
+      mcpPaymentVerified: isMcpEndpoint
+        ? mcpTraceState.paymentVerified
+        : null,
+      mcpChallengeIssued: isMcpEndpoint
+        ? mcpTraceState.challengeIssued
+        : null,
+      mcpPaymentErrorCategory: isMcpEndpoint
+        ? mcpTraceState.paymentErrorCategory
+        : null,
+      mcpPaymentOutcome,
+      mcpExecutionSucceeded: isMcpEndpoint
+        ? mcpTraceState.executionSucceeded
+        : null,
+      mcpExecutionMs:
+        isMcpEndpoint && mcpTraceState.executionStartedAt !== null
+          ? (mcpTraceState.executionFinishedAt ?? Date.now()) -
+            mcpTraceState.executionStartedAt
+          : null,
+      mcpSettlementAttempted: isMcpEndpoint
+        ? mcpTraceState.settlementAttempted
+        : null,
+      mcpSettlementSucceeded: isMcpEndpoint
+        ? mcpTraceState.settlementSucceeded
+        : null,
+      mcpSettlementNetwork: isMcpEndpoint
+        ? mcpTraceState.settlementNetwork
+        : null,
+      mcpSettlementTransaction: isMcpEndpoint
+        ? mcpTraceState.settlementTransaction
+        : null,
+      mcpHandlerErrorCode: isMcpEndpoint
+        ? mcpTraceState.handlerErrorCode
+        : null,
+      mcpHandlerErrorMessage: isMcpEndpoint
+        ? mcpTraceState.handlerErrorMessage
+        : null,
       bodyKind: diagnosticTargetPath ? getRequestBodyKind(req.body) : null,
       bodyKeys: diagnosticTargetPath ? getSafeBodyKeys(req.body) : null,
       validationIssues: diagnosticTargetPath
@@ -1190,7 +1698,9 @@ app.use((req, res, next) => {
   next();
 });
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, limit: 100, standardHeaders: "draft-8", legacyHeaders: false, message: { error: "Too many requests. Try again later." } }));
-const nodeHandler = toNodeHandler(handler);
+const nodeHandler = toNodeHandler(handler, {
+  onerror: recordMcpAdapterError,
+});
 const requireAnalyzePayment = paymentMiddleware(
   {
     "POST /analyze": {
@@ -1337,7 +1847,7 @@ const PUBLIC_SERVICE_URL = "https://mcp-x402-production.up.railway.app";
 app.get("/", (_req, res) => {
   res.json({
     name: "MCP x402 - Evidence-Backed Web Verification",
-    version: "1.2.1",
+    version: SERVICE_VERSION,
     description:
      "PT: Verificação baseada em evidência para agentes de IA antes de tomarem decisões sobre vendedores, produtos, ofertas, políticas ou afirmações. PT: Serviço MCP/x402 para análise de páginas web e verificação auditável de condições.",
     discovery: {
@@ -1412,7 +1922,7 @@ app.get("/openapi.json", (_req, res) => {
     openapi: "3.1.0",
     info: {
       title: "MCP x402 - Evidence-Backed Web Verification",
-      version: "1.2.1",
+      version: SERVICE_VERSION,
       description:
         "EN: x402 service for AI analysis of public web pages and auditable condition verification. Payment instructions are returned through the payment-required header. PT: Serviço x402 para análise com IA de páginas web públicas e verificação auditável de condições. As instruções de pagamento são devolvidas no cabeçalho payment-required.",
         "x-supported-languages": ["en", "pt-PT"],
@@ -1628,7 +2138,7 @@ app.get("/openapi.json", (_req, res) => {
 app.get("/agents.json", (_req, res) => {
   res.json({
     name: "MCP x402 - Evidence-Backed Web Verification",
-    version: "1.2.1",
+    version: SERVICE_VERSION,
     description:
      "EN: MCP/x402 service for public URL analysis, AI consultation and auditable condition verification. PT: Serviço MCP/x402 para análise de URLs públicas, consulta de IA e verificação auditável de condições.",
     languages: {
@@ -1886,15 +2396,52 @@ app.all("/mcp", (req, res) => {
     body === null ? "null" :
     Array.isArray(body) ? "array" :
     typeof body;
-
-  const jsonRpcMethod =
-    body !== null &&
-    typeof body === "object" &&
-    !Array.isArray(body) &&
-    "method" in body &&
-    typeof (body as { method?: unknown }).method === "string"
-      ? (body as { method: string }).method
+  const bodyRecord =
+    body !== null && typeof body === "object" && !Array.isArray(body)
+      ? body as Record<string, unknown>
       : null;
+  const jsonRpcMethod =
+    typeof bodyRecord?.method === "string"
+      ? bodyRecord.method.slice(0, 200)
+      : null;
+  const params =
+    bodyRecord?.params !== null &&
+    typeof bodyRecord?.params === "object" &&
+    !Array.isArray(bodyRecord.params)
+      ? bodyRecord.params as Record<string, unknown>
+      : null;
+  const toolName =
+    jsonRpcMethod === "tools/call" && typeof params?.name === "string"
+      ? params.name
+        .replace(/[^A-Za-z0-9_-]/g, "?")
+        .slice(0, 100)
+      : null;
+  const meta =
+    params?._meta !== null &&
+    typeof params?._meta === "object" &&
+    !Array.isArray(params._meta)
+      ? params._meta as Record<string, unknown>
+      : null;
+  const paymentPayloadPresent =
+    jsonRpcMethod === "tools/call"
+      ? Boolean(meta?.["x402/payment"])
+      : null;
+  const state = res.locals.mcpTraceState as McpTraceState;
+
+  state.jsonRpcMethod = jsonRpcMethod;
+  state.toolName = toolName;
+  state.paymentPayloadPresent = paymentPayloadPresent;
+
+  const trace: McpRequestTrace = {
+    requestId: String(res.locals.requestId),
+    journeyId: String(res.locals.journeyId),
+    journeyIdSource:
+      res.locals.journeyIdSource === "client" ? "client" : "server",
+    sourceFingerprint: String(res.locals.sourceFingerprint),
+    clientFingerprint: String(res.locals.clientFingerprint),
+    userAgent: getSafeHeader(req.get("user-agent"), 300),
+    state,
+  };
 
   res.on("finish", () => {
     if (res.statusCode < 400) return;
@@ -1903,16 +2450,37 @@ app.all("/mcp", (req, res) => {
       level: "warn",
       timestamp: new Date().toISOString(),
       event: "mcp_rejection",
-      requestId: res.getHeader("x-request-id") ?? null,
+      requestId: trace.requestId,
+      journeyId: trace.journeyId,
+      journeyIdSource: trace.journeyIdSource,
+      sourceFingerprint: trace.sourceFingerprint,
+      clientFingerprint: trace.clientFingerprint,
+      userAgent: trace.userAgent,
       status: res.statusCode,
-      contentType: req.get("content-type") ?? null,
-      mcpProtocolVersion: req.get("mcp-protocol-version") ?? null,
+      contentType: getSafeHeader(req.get("content-type"), 120),
+      accept: getSafeHeader(req.get("accept"), 200),
+      mcpProtocolVersion: getSafeHeader(
+        req.get("mcp-protocol-version"),
+        100,
+      ),
+      mcpSessionIdPresent: Boolean(req.get("mcp-session-id")),
       bodyKind,
+      bodyKeys: getSafeBodyKeys(body),
+      jsonRpcVersion: typeof bodyRecord?.jsonrpc === "string"
+        ? bodyRecord.jsonrpc.slice(0, 20)
+        : null,
+      jsonRpcIdPresent: bodyRecord ? "id" in bodyRecord : false,
       jsonRpcMethod,
+      toolName,
+      paymentPayloadPresent,
+      handlerErrorCode: state.handlerErrorCode,
+      handlerErrorMessage: state.handlerErrorMessage,
     }));
   });
 
-  void nodeHandler(req, res, req.body);
+  mcpRequestContext.run(trace, () => {
+    void nodeHandler(req, res, req.body).catch(recordMcpAdapterError);
+  });
 });
 
 app.post(
@@ -2032,6 +2600,19 @@ app.post(
     }
   },
 );
+
+app.all(["/analyze", "/verify-conditions"], (req, res) => {
+  res.setHeader("Allow", "POST");
+  res.status(405).json({
+    error: "method_not_allowed",
+    message: `Use POST ${req.path} with application/json.`,
+    messagePt: `Use POST ${req.path} com application/json.`,
+    journey: {
+      id: String(res.locals.journeyId),
+      header: "x-journey-id",
+    },
+  });
+});
 
 app.use(safeJsonErrorHandler);
 

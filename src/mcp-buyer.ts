@@ -2,11 +2,17 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { ExactEvmScheme } from "@x402/evm/exact/client";
 import { createx402MCPClient } from "@x402/mcp";
 import { privateKeyToAccount } from "viem/accounts";
+import { randomUUID } from "node:crypto";
 
-const MCP_URL = "https://mcp-x402-production.up.railway.app/mcp";
+const MCP_URL =
+  process.env.MCP_ENDPOINT ??
+  "https://mcp-x402-production.up.railway.app/mcp";
 const NETWORK = "eip155:8453";
 const MAX_PAYMENT = 50_000n;
 const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+const JOURNEY_ID =
+  process.env.JOURNEY_ID ??
+  `Diogo-MCP-${Date.now()}-${randomUUID().replace(/-/g, "")}`;
 
 type ToolName =
   | "analisar_url"
@@ -120,14 +126,22 @@ const client = createx402MCPClient({
   },
 });
 
-const transport = new StreamableHTTPClientTransport(new URL(MCP_URL));
+const transport = new StreamableHTTPClientTransport(new URL(MCP_URL), {
+  requestInit: {
+    headers: {
+      "User-Agent": "Diogo-MCP-Buyer/1.2.2",
+      "x-journey-id": JOURNEY_ID,
+    },
+  },
+});
 let connected = false;
 
 try {
+  console.log("JORNADA MCP:", JOURNEY_ID);
   await client.connect(
     transport as unknown as Parameters<typeof client.connect>[0],
   );
-connected = true;
+  connected = true;
   const result = await client.callTool(tool, toolArguments);
 
     const paymentSettled =
