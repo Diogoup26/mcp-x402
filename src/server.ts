@@ -20,6 +20,13 @@ import * as z from "zod/v4";
 import helmet from "helmet";
 import type { ErrorRequestHandler } from "express";
 import { rateLimit } from "express-rate-limit";
+import {
+  conversionFeedbackInput,
+  FEEDBACK_INTENTS,
+  FEEDBACK_REASONS,
+  FEEDBACK_STAGES,
+  JOURNEY_ID_PATTERN,
+} from "./feedback.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const HOST = process.env.HOST ?? "0.0.0.0";
@@ -42,7 +49,7 @@ const X402_NETWORK = (process.env.X402_NETWORK ?? "eip155:84532") as `${string}:
 const CONSULT_PRICE = "$0.02";
 const ANALYZE_PRICE = "$0.05";
 const VERIFY_PRICE = "$0.05";
-const SERVICE_VERSION = "1.2.4";
+const SERVICE_VERSION = "1.2.5";
 const X402_FACILITATOR_URL = "https://x402.org/facilitator";
 const DISCOVERY_PATHS = new Set([
   "/",
@@ -60,21 +67,8 @@ const PREFLIGHT_PATHS = new Set([
   "/preflight/mcp",
 ]);
 
-const JOURNEY_ID_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
 const OBSERVABILITY_SALT =
   process.env.OBSERVABILITY_SALT?.trim() || randomUUID();
-const FEEDBACK_REASONS = [
-  "research_only",
-  "no_wallet",
-  "unsupported_network",
-  "insufficient_funds",
-  "spending_not_authorized",
-  "price",
-  "insufficient_value",
-  "integration_error",
-  "other",
-] as const;
-
 type McpTraceState = {
   jsonRpcMethod: string | null;
   toolName: string | null;
@@ -478,13 +472,45 @@ const mcpPreflightInput = z.discriminatedUnion("toolName", [
   }),
 ]);
 
-const conversionFeedbackInput = z.object({
-  journeyId: z.string().regex(JOURNEY_ID_PATTERN),
-  reason: z.enum(FEEDBACK_REASONS),
-  stage: z
-    .enum(["discovery", "preflight", "payment", "execution", "delivery"])
-    .optional(),
-});
+function getFeedbackInstructions(journeyId: string) {
+  return {
+    optional: true,
+    method: "POST",
+    url: `${PUBLIC_SERVICE_URL}/feedback`,
+    journeyId,
+    required: ["journeyId", "reason"],
+    optionalFields: ["stage", "intent", "automatic"],
+    reasons: FEEDBACK_REASONS,
+    stages: FEEDBACK_STAGES,
+    intents: FEEDBACK_INTENTS,
+    guidance:
+      "Send only an explicitly selected reason. Clients may automatically send integration_error only for an objectively detected technical failure.",
+    guidancePt:
+      "Envie apenas um motivo escolhido explicitamente. Os clientes só podem enviar integration_error automaticamente perante uma falha técnica objetivamente detetada.",
+  };
+}
+
+function getFeedbackOpenApiHeaders() {
+  return {
+    "x-feedback-endpoint": {
+      description:
+        "Endpoint opcional para feedback normalizado desta jornada.",
+      schema: { type: "string", format: "uri" },
+    },
+    "x-feedback-reasons": {
+      description: "Motivos de feedback permitidos, separados por vírgulas.",
+      schema: { type: "string" },
+    },
+    "x-feedback-stages": {
+      description: "Etapas de funil permitidas, separadas por vírgulas.",
+      schema: { type: "string" },
+    },
+    "x-feedback-intents": {
+      description: "Intenções opcionais permitidas, separadas por vírgulas.",
+      schema: { type: "string" },
+    },
+  };
+}
 
 type VerifyConditionsInput = z.infer<typeof verifyConditionsInput>;
 
@@ -1928,6 +1954,19 @@ app.use((req, res, next) => {
   }, next);
 });
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, limit: 100, standardHeaders: "draft-8", legacyHeaders: false, message: { error: "Too many requests. Try again later." } }));
+app.use((req, res, next) => {
+  if (
+    req.path === "/mcp" ||
+    req.path === "/analyze" ||
+    req.path === "/verify-conditions"
+  ) {
+    res.setHeader("x-feedback-endpoint", `${PUBLIC_SERVICE_URL}/feedback`);
+    res.setHeader("x-feedback-reasons", FEEDBACK_REASONS.join(","));
+    res.setHeader("x-feedback-stages", FEEDBACK_STAGES.join(","));
+    res.setHeader("x-feedback-intents", FEEDBACK_INTENTS.join(","));
+  }
+  next();
+});
 const nodeHandler = toNodeHandler(handler, {
   onerror: recordMcpAdapterError,
 });
@@ -2141,6 +2180,15 @@ app.get("/.well-known/x402", (_req, res) => {
         description: "EN: MCP tools for evidence-backed verification, paid public URL analysis, and AI consultation. PT: Ferramentas MCP para verificação baseada em evidência, análise paga de URLs públicas e consulta de IA.",
       },
     ],
+    feedback: {
+      endpoint: `${PUBLIC_SERVICE_URL}/feedback`,
+      method: "POST",
+      optional: true,
+      reasons: FEEDBACK_REASONS,
+      stages: FEEDBACK_STAGES,
+      intents: FEEDBACK_INTENTS,
+      freeTextAccepted: false,
+    },
   });
 });
 
@@ -2187,15 +2235,20 @@ app.get("/openapi.json", (_req, res) => {
             },
           },
           responses: {
-            "200": { description: "Análise concluída." },
+            "200": {
+              description: "Análise concluída.",
+              headers: getFeedbackOpenApiHeaders(),
+            },
             "400": { description: "Pedido inválido." },
             "402": {
-              description: "Pagamento x402 necessário.",
+              description:
+                "Pagamento x402 necessário. A resposta também anuncia o endpoint e os valores normalizados de feedback, caso o cliente não prossiga.",
               headers: {
                 "payment-required": {
                   description: "Condições de pagamento x402.",
                   schema: { type: "string" },
                 },
+                ...getFeedbackOpenApiHeaders(),
               },
             },
             "502": { description: "Falha temporária ao analisar a URL." },
@@ -2243,15 +2296,18 @@ app.get("/openapi.json", (_req, res) => {
             "200": {
               description:
                 "Recibo auditável: decisão por condição, prova textual quando disponível, verificationId e pageHash SHA-256.",
+              headers: getFeedbackOpenApiHeaders(),
             },
             "400": { description: "Pedido inválido." },
             "402": {
-              description: "Pagamento x402 necessário.",
+              description:
+                "Pagamento x402 necessário. A resposta também anuncia o endpoint e os valores normalizados de feedback, caso o cliente não prossiga.",
               headers: {
                 "payment-required": {
                   description: "Condições de pagamento x402.",
                   schema: { type: "string" },
                 },
+                ...getFeedbackOpenApiHeaders(),
               },
             },
             "502": { description: "Falha temporária ao verificar a página." },
@@ -2396,6 +2452,90 @@ app.get("/openapi.json", (_req, res) => {
           },
         },
       },
+      "/feedback": {
+        post: {
+          summary: "Regista feedback normalizado e opcional da jornada",
+          description:
+            "Não cobra e não aceita texto livre. O motivo deve ser escolhido explicitamente pelo cliente. O valor integration_error só pode ser enviado automaticamente quando o comprador detetar objetivamente uma falha técnica.",
+          tags: ["Feedback", "Observability"],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["journeyId", "reason"],
+                  properties: {
+                    journeyId: {
+                      type: "string",
+                      pattern: "^[A-Za-z0-9_-]{8,128}$",
+                      description:
+                        "Identificador devolvido no cabeçalho x-journey-id ou pelo preflight.",
+                    },
+                    reason: {
+                      type: "string",
+                      enum: [...FEEDBACK_REASONS],
+                      description:
+                        "Motivo normalizado escolhido explicitamente. Não inferir motivações humanas.",
+                    },
+                    stage: {
+                      type: "string",
+                      enum: [...FEEDBACK_STAGES],
+                      description: "Etapa observável em que a jornada terminou.",
+                    },
+                    intent: {
+                      type: "string",
+                      enum: [...FEEDBACK_INTENTS],
+                      description:
+                        "Objetivo opcional declarado pelo cliente, separado do motivo de abandono ou resultado.",
+                    },
+                    automatic: {
+                      type: "boolean",
+                      default: false,
+                      description:
+                        "Verdadeiro apenas para integration_error gerado por uma falha técnica objetivamente detetada.",
+                    },
+                  },
+                },
+                examples: {
+                  stoppedAtPayment: {
+                    summary: "Cliente não prosseguiu devido ao preço",
+                    value: {
+                      journeyId: "example_journey_123",
+                      reason: "price",
+                      stage: "payment",
+                      intent: "evaluate_service",
+                    },
+                  },
+                  technicalFailure: {
+                    summary: "Erro técnico detetado automaticamente",
+                    value: {
+                      journeyId: "example_journey_456",
+                      reason: "integration_error",
+                      stage: "preflight",
+                      intent: "analyze_page",
+                      automatic: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            "202": {
+              description: "Feedback validado e registado.",
+            },
+            "400": {
+              description:
+                "Feedback inválido; devolve campos e valores permitidos.",
+            },
+            "429": {
+              description: "Limite temporário de pedidos excedido.",
+            },
+          },
+        },
+      },
       "/mcp": {
         post: {
           summary: "Endpoint Model Context Protocol",
@@ -2438,6 +2578,13 @@ app.get("/agents.json", (_req, res) => {
       analyzePrice: ANALYZE_PRICE,
       consultPrice: CONSULT_PRICE,
     },
+    feedback: {
+      optional: true,
+      reasons: FEEDBACK_REASONS,
+      stages: FEEDBACK_STAGES,
+      intents: FEEDBACK_INTENTS,
+      freeTextAccepted: false,
+    },
     capabilities: [
       "Analisar uma URL pública",
       "Resumir e extrair factos",
@@ -2463,7 +2610,7 @@ app.get("/llms.txt", (_req, res) => {
 - Pré-validação gratuita da análise: POST ${PUBLIC_SERVICE_URL}/preflight/analyze — valida o JSON, informa preço e explica o próximo passo sem cobrar
 - Pré-validação gratuita da verificação: POST ${PUBLIC_SERVICE_URL}/preflight/verify-conditions — valida URL e condições, informa preço e explica o próximo passo sem cobrar
 - Pré-validação gratuita do MCP: POST ${PUBLIC_SERVICE_URL}/preflight/mcp — valida ferramenta e argumentos e preserva o journeyId antes do desafio x402
-- Feedback opcional da integração: POST ${PUBLIC_SERVICE_URL}/feedback — aceita apenas etapa e motivo normalizados, sem texto livre
+- Feedback opcional da integração: POST ${PUBLIC_SERVICE_URL}/feedback — aceita reason, stage e intent normalizados, sem texto livre; nunca infira motivos humanos
 - Estado: GET ${PUBLIC_SERVICE_URL}/health
 - Especificação OpenAPI: GET ${PUBLIC_SERVICE_URL}/openapi.json
 
@@ -2541,6 +2688,7 @@ app.post("/preflight/mcp", (req, res) => {
       nextStep:
         "Connect to the MCP URL, call the validated tool with the same arguments, read the x402 challenge, authorize it, and retry with the payment payload.",
     },
+    feedback: getFeedbackInstructions(journeyId),
   });
 });
 
@@ -2608,12 +2756,7 @@ app.post("/preflight/analyze", (req, res) => {
         "Recommended actions",
       ],
     },
-    feedback: {
-      optional: true,
-      url: `${PUBLIC_SERVICE_URL}/feedback`,
-      journeyId,
-      reasons: FEEDBACK_REASONS,
-    },
+    feedback: getFeedbackInstructions(journeyId),
   });
 });
 
@@ -2686,12 +2829,7 @@ app.post("/preflight/verify-conditions", (req, res) => {
       decisionValues: ["confirmado", "rejeitado", "incerto"],
       includesEvidencePerCondition: true,
     },
-    feedback: {
-      optional: true,
-      url: `${PUBLIC_SERVICE_URL}/feedback`,
-      journeyId,
-      reasons: FEEDBACK_REASONS,
-    },
+    feedback: getFeedbackInstructions(journeyId),
   });
 });
 
@@ -2703,8 +2841,10 @@ app.post("/feedback", (req, res) => {
       accepted: false,
       error: "invalid_feedback",
       required: ["journeyId", "reason"],
-      optional: ["stage"],
+      optional: ["stage", "intent", "automatic"],
       allowedReasons: FEEDBACK_REASONS,
+      allowedStages: FEEDBACK_STAGES,
+      allowedIntents: FEEDBACK_INTENTS,
       details: z.treeifyError(parsed.error),
     });
     return;
@@ -2721,6 +2861,8 @@ app.post("/feedback", (req, res) => {
     journeyId: parsed.data.journeyId,
     reason: parsed.data.reason,
     stage: parsed.data.stage ?? null,
+    intent: parsed.data.intent ?? null,
+    automatic: parsed.data.automatic ?? false,
     sourceFingerprint: res.locals.sourceFingerprint,
     clientFingerprint: res.locals.clientFingerprint,
   }));
@@ -2728,6 +2870,10 @@ app.post("/feedback", (req, res) => {
   res.status(202).json({
     accepted: true,
     journeyId: parsed.data.journeyId,
+    reason: parsed.data.reason,
+    stage: parsed.data.stage ?? null,
+    intent: parsed.data.intent ?? null,
+    automatic: parsed.data.automatic ?? false,
   });
 });
 

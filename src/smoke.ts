@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-const SERVICE_VERSION = "1.2.4";
+const SERVICE_VERSION = "1.2.5";
 const SERVICE_URL = (
   process.env.SERVICE_URL ??
   "https://mcp-x402-production.up.railway.app"
@@ -106,11 +106,49 @@ async function main(): Promise<void> {
   );
   const discoveryBody = await discovery.json() as {
     endpoints?: unknown[];
+    feedback?: { endpoint?: unknown; reasons?: unknown; intents?: unknown };
   };
   assert(
     Array.isArray(discoveryBody.endpoints) &&
       discoveryBody.endpoints.length >= 3,
     "Discovery x402 sem os endpoints esperados",
+  );
+  assert(
+    discoveryBody.feedback?.endpoint === `${SERVICE_URL}/feedback` &&
+      Array.isArray(discoveryBody.feedback.reasons) &&
+      Array.isArray(discoveryBody.feedback.intents),
+    "Discovery x402 sem metadata completa de feedback",
+  );
+
+  const openApi = await expectStatus("OpenAPI feedback contract", "/openapi.json", 200);
+  const openApiBody = await openApi.json() as {
+    paths?: {
+      "/feedback"?: {
+        post?: {
+          requestBody?: {
+            content?: {
+              "application/json"?: {
+                schema?: {
+                  required?: unknown;
+                  properties?: { intent?: { enum?: unknown } };
+                };
+              };
+            };
+          };
+        };
+      };
+    };
+  };
+  const feedbackSchema =
+    openApiBody.paths?.["/feedback"]?.post?.requestBody?.content?.[
+      "application/json"
+    ]?.schema;
+  assert(
+    Array.isArray(feedbackSchema?.required) &&
+      feedbackSchema.required.includes("journeyId") &&
+      feedbackSchema.required.includes("reason") &&
+      Array.isArray(feedbackSchema.properties?.intent?.enum),
+    "OpenAPI não documenta completamente /feedback",
   );
 
   const analyzeBody = {
@@ -129,8 +167,15 @@ async function main(): Promise<void> {
   );
   const analyzePreflightBody = await analyzePreflight.json() as {
     ready?: unknown;
+    feedback?: { url?: unknown; reasons?: unknown; intents?: unknown };
   };
   assert(analyzePreflightBody.ready === true, "Preflight analyze não ficou pronto");
+  assert(
+    analyzePreflightBody.feedback?.url === `${SERVICE_URL}/feedback` &&
+      Array.isArray(analyzePreflightBody.feedback.reasons) &&
+      Array.isArray(analyzePreflightBody.feedback.intents),
+    "Preflight analyze sem instruções completas de feedback",
+  );
 
   const analyzeChallenge = await expectStatus(
     "analyze x402 challenge",
@@ -145,6 +190,12 @@ async function main(): Promise<void> {
   assert(
     Boolean(analyzeChallenge.headers.get("payment-required")),
     "Analyze 402 sem cabeçalho payment-required",
+  );
+  assert(
+    analyzeChallenge.headers.get("x-feedback-endpoint") ===
+      `${SERVICE_URL}/feedback` &&
+      analyzeChallenge.headers.get("x-feedback-reasons")?.includes("price"),
+    "Analyze 402 sem instruções de feedback",
   );
   await analyzeChallenge.body?.cancel();
 
@@ -199,6 +250,7 @@ async function main(): Promise<void> {
   const mcpPreflightBody = await mcpPreflight.json() as {
     ready?: unknown;
     target?: { url?: unknown; toolName?: unknown };
+    feedback?: { url?: unknown; reasons?: unknown; intents?: unknown };
   };
   assert(mcpPreflightBody.ready === true, "Preflight MCP não ficou pronto");
   assert(
@@ -208,6 +260,12 @@ async function main(): Promise<void> {
   assert(
     mcpPreflightBody.target?.toolName === "verificar_condicoes",
     "Preflight MCP não preservou o nome da ferramenta",
+  );
+  assert(
+    mcpPreflightBody.feedback?.url === `${SERVICE_URL}/feedback` &&
+      Array.isArray(mcpPreflightBody.feedback.reasons) &&
+      Array.isArray(mcpPreflightBody.feedback.intents),
+    "Preflight MCP sem instruções completas de feedback",
   );
 
   const wrongMethod = await expectStatus(
@@ -355,6 +413,41 @@ async function main(): Promise<void> {
   assert(
     bazaarInput?.toolName === "verificar_condicoes",
     "Extensão Bazaar não preservou o toolName",
+  );
+  assert(
+    toolChallenge.headers.get("x-feedback-endpoint") ===
+      `${SERVICE_URL}/feedback` &&
+      toolChallenge.headers.get("x-feedback-intents")?.includes(
+        "verify_conditions",
+      ),
+    "Desafio MCP sem instruções de feedback",
+  );
+
+  const feedbackResponse = await expectStatus(
+    "explicit normalized feedback",
+    "/feedback",
+    202,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        journeyId: JOURNEY_ID,
+        reason: "other",
+        stage: "delivery",
+        intent: "evaluate_service",
+      }),
+    },
+  );
+  const feedbackBody = await feedbackResponse.json() as {
+    accepted?: unknown;
+    intent?: unknown;
+    automatic?: unknown;
+  };
+  assert(
+    feedbackBody.accepted === true &&
+      feedbackBody.intent === "evaluate_service" &&
+      feedbackBody.automatic === false,
+    "Endpoint /feedback não preservou o feedback normalizado",
   );
 
   console.log(JSON.stringify({

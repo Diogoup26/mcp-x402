@@ -3,7 +3,7 @@
   "name": "io.github.Diogoup26/mcp-x402",
   "title": "MCP x402 - Evidence-Backed Web Verification",
   "description": "Evidence-backed x402 web verification for AI agents, with auditable decisions for every condition.",
-  "version": "1.2.4",
+  "version": "1.2.5",
   "repository": {
     "url": "https://github.com/Diogoup26/mcp-x402",
     "source": "github"

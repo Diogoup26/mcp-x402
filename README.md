@@ -244,9 +244,50 @@ The MCP buyer never prints the private key and rejects any payment that:
 - does not use the configured Base USDC contract;
 - exceeds $0.05 USDC.
 
+## Optional Conversion Feedback
+
+Every paid HTTP or MCP response advertises `x-feedback-endpoint` and the
+allowed normalized reason, stage, and intent values. The free preflight
+responses include the same information in a `feedback` block. Feedback is
+submitted to `POST /feedback`, contains no free text, and never includes a
+private key, prompt, URL, page content, or payment payload.
+
+The three buyers accept:
+
+```text
+--feedback-reason <research_only|no_wallet|unsupported_network|insufficient_funds|spending_not_authorized|price|insufficient_value|integration_error|other>
+--feedback-stage <discovery|preflight|payment|execution|delivery>
+--feedback-intent <research|analyze_page|verify_conditions|general_question|evaluate_service|other>
+```
+
+When `--feedback-reason` is supplied without `--feedback-stage`, the stage
+defaults to `payment` and the buyer does not authorize a payment. The HTTP
+buyers first receive the unsigned 402 challenge, submit the explicit feedback,
+and stop. The MCP buyer stops after its free preflight and submits the explicit
+feedback without requiring a wallet.
+
+Example: report that the price stopped an evaluation, without paying:
+
+```bash
+npm run analyze -- "https://example.com" "Summarize this page." --feedback-reason price --feedback-intent evaluate_service
+```
+
+To submit explicit feedback after a completed delivery, select that stage:
+
+```bash
+npm run mcp:consult -- "Reply only with: MCP OK" --feedback-reason other --feedback-stage delivery --feedback-intent general_question
+```
+
+Buyers automatically submit only `integration_error`, and only for an
+objectively detected technical failure such as failed discovery/preflight, an
+HTTP 5xx result, a paid MCP tool error, or a missing settlement receipt after
+a payment was made. They never infer `price`, `research_only`, `no_wallet`, or
+another human or commercial motivation.
+
 ## Controlled Smoke Test (No Payment)
 
-After deployment, validate discovery, preflight, HTTP 402 challenges, HTTP
+After deployment, validate discovery, preflight, the OpenAPI feedback contract,
+normalized feedback submission, HTTP 402 challenges and feedback headers, HTTP
 method handling, MCP initialization, tool discovery and the MCP x402 challenge:
 
 ```bash
@@ -255,7 +296,7 @@ npm run smoke
 ```
 
 Use `SERVICE_URL` to target another deployment. The test uses one persistent
-`x-journey-id`, sends `User-Agent: Diogo-Smoke/1.2.4`, verifies that the MCP
+`x-journey-id`, sends `User-Agent: Diogo-Smoke/1.2.5`, verifies that the MCP
 x402 challenge advertises the public HTTPS endpoint with `type=mcp` and the
 correct `toolName`, and never creates or
 signs a payment.
