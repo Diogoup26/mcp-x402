@@ -10,7 +10,7 @@ const ANALYZE_ENDPOINT =
   process.env.ANALYZE_ENDPOINT ??
   "https://mcp-x402-production.up.railway.app/analyze";
 const SERVICE_ORIGIN = new URL(ANALYZE_ENDPOINT).origin;
-const USER_AGENT = "Diogo-REST-Analyze/1.2.3";
+const USER_AGENT = "Diogo-REST-Analyze/1.2.4";
 
 const [url, ...objectiveParts] = process.argv.slice(2);
 const objetivo = objectiveParts.join(" ").trim();

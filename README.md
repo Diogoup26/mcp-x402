@@ -255,7 +255,7 @@ npm run smoke
 ```
 
 Use `SERVICE_URL` to target another deployment. The test uses one persistent
-`x-journey-id`, sends `User-Agent: Diogo-Smoke/1.2.3`, verifies that the MCP
+`x-journey-id`, sends `User-Agent: Diogo-Smoke/1.2.4`, verifies that the MCP
 x402 challenge advertises the public HTTPS endpoint with `type=mcp` and the
 correct `toolName`, and never creates or
 signs a payment.
@@ -263,6 +263,8 @@ signs a payment.
 The three payment buyers now perform discovery and a free preflight before the
 paid request, using the same persistent journey ID throughout. Set `JOURNEY_ID`
 to reuse an existing journey; otherwise each buyer creates and prints one.
+The MCP buyer additionally requires the exact advertised price, Base USDC,
+Base mainnet, and the configured service recipient before it can sign.
 
 ## Funnel Observability
 

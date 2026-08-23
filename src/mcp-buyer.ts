@@ -8,11 +8,14 @@ const MCP_URL =
   process.env.MCP_ENDPOINT ??
   "https://mcp-x402-production.up.railway.app/mcp";
 const SERVICE_ORIGIN = new URL(MCP_URL).origin;
-const SERVICE_VERSION = "1.2.3";
+const SERVICE_VERSION = "1.2.4";
 const USER_AGENT = `Diogo-MCP-Buyer/${SERVICE_VERSION}`;
 const NETWORK = "eip155:8453";
-const MAX_PAYMENT = 50_000n;
 const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+const EXPECTED_PAY_TO = (
+  process.env.X402_PAY_TO ??
+  "0xAe94Cc8080c9DcAF97Dda998F926ec52AF968d61"
+).toLowerCase();
 const JOURNEY_ID =
   process.env.JOURNEY_ID ??
   `Diogo-MCP-${Date.now()}-${randomUUID().replace(/-/g, "")}`;
@@ -71,6 +74,11 @@ if (requestedTool === "analisar_url") {
   );
   process.exit(1);
 }
+
+const EXPECTED_PAYMENT =
+  tool === "consultar_ia" ? 20_000n : 50_000n;
+const EXPECTED_PRICE =
+  tool === "consultar_ia" ? "$0.02" : "$0.05";
 const privateKey = process.env.EVM_PRIVATE_KEY;
 
 if (!privateKey || !/^0x[0-9a-fA-F]{64}$/.test(privateKey)) {
@@ -112,12 +120,18 @@ async function prepareJourney(): Promise<void> {
   });
   const result = await preflight.json() as {
     ready?: unknown;
+    target?: { url?: unknown; toolName?: unknown };
     journey?: { id?: unknown };
+    payment?: { network?: unknown; price?: unknown };
   };
   if (
     !preflight.ok ||
     result.ready !== true ||
-    result.journey?.id !== JOURNEY_ID
+    result.target?.url !== MCP_URL ||
+    result.target?.toolName !== tool ||
+    result.journey?.id !== JOURNEY_ID ||
+    result.payment?.network !== NETWORK ||
+    result.payment?.price !== EXPECTED_PRICE
   ) {
     throw new Error(
       `Preflight MCP falhou com HTTP ${preflight.status}.`,
@@ -144,7 +158,8 @@ const client = createx402MCPClient({
           requirement.network === NETWORK &&
           requirement.asset.toLowerCase() ===
             USDC_BASE.toLowerCase() &&
-          BigInt(requirement.amount) <= MAX_PAYMENT,
+          requirement.payTo.toLowerCase() === EXPECTED_PAY_TO &&
+          BigInt(requirement.amount) === EXPECTED_PAYMENT,
       ),
   ],
   autoPayment: true,
@@ -154,7 +169,8 @@ const client = createx402MCPClient({
         requirement.network === NETWORK &&
         requirement.asset.toLowerCase() ===
           USDC_BASE.toLowerCase() &&
-        BigInt(requirement.amount) <= MAX_PAYMENT,
+        requirement.payTo.toLowerCase() === EXPECTED_PAY_TO &&
+        BigInt(requirement.amount) === EXPECTED_PAYMENT,
     );
 
     if (!allowed) {
