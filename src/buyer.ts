@@ -19,7 +19,7 @@ const ANALYZE_ENDPOINT =
   process.env.ANALYZE_ENDPOINT ??
   "https://mcp-x402-production.up.railway.app/analyze";
 const SERVICE_ORIGIN = new URL(ANALYZE_ENDPOINT).origin;
-const USER_AGENT = "Diogo-REST-Analyze/1.2.5";
+const USER_AGENT = "Diogo-REST-Analyze/1.2.6";
 
 let parsedCli: ReturnType<typeof parseFeedbackOptions>;
 try {

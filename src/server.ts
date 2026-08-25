@@ -27,6 +27,18 @@ import {
   FEEDBACK_STAGES,
   JOURNEY_ID_PATTERN,
 } from "./feedback.js";
+import {
+  getHttpPaymentContinuation,
+  getMcpPaymentContinuation,
+  PUBLIC_HTTP_URL_PATTERN,
+} from "./client-guidance.js";
+import {
+  classifyKnownToolPrePaymentRejection,
+  isSupportedMcpToolName,
+  SUPPORTED_MCP_TOOL_NAMES,
+  type McpPrePaymentRejectionCategory,
+  type SupportedMcpToolName,
+} from "./mcp-observability.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const HOST = process.env.HOST ?? "0.0.0.0";
@@ -42,6 +54,18 @@ const PUBLIC_SERVICE_URL = (
     : "https://mcp-x402-production.up.railway.app")
 ).replace(/\/+$/, "");
 const PUBLIC_MCP_SERVER_URL = `${PUBLIC_SERVICE_URL}/mcp`;
+const ANALYZE_PAYMENT_CONTINUATION = getHttpPaymentContinuation(
+  `${PUBLIC_SERVICE_URL}/analyze`,
+  `${PUBLIC_SERVICE_URL}/preflight/analyze`,
+);
+const VERIFY_PAYMENT_CONTINUATION = getHttpPaymentContinuation(
+  `${PUBLIC_SERVICE_URL}/verify-conditions`,
+  `${PUBLIC_SERVICE_URL}/preflight/verify-conditions`,
+);
+const MCP_PAYMENT_CONTINUATION = getMcpPaymentContinuation(
+  PUBLIC_MCP_SERVER_URL,
+  `${PUBLIC_SERVICE_URL}/preflight/mcp`,
+);
 const MAX_DOWNLOAD_BYTES = 1_500_000;
 const MAX_ANALYSIS_CHARS = 12_000;
 const PAY_TO = process.env.X402_PAY_TO ?? "0xAe94Cc8080c9DcAF97Dda998F926ec52AF968d61";
@@ -49,7 +73,7 @@ const X402_NETWORK = (process.env.X402_NETWORK ?? "eip155:84532") as `${string}:
 const CONSULT_PRICE = "$0.02";
 const ANALYZE_PRICE = "$0.05";
 const VERIFY_PRICE = "$0.05";
-const SERVICE_VERSION = "1.2.5";
+const SERVICE_VERSION = "1.2.6";
 const X402_FACILITATOR_URL = "https://x402.org/facilitator";
 const DISCOVERY_PATHS = new Set([
   "/",
@@ -71,8 +95,12 @@ const OBSERVABILITY_SALT =
   process.env.OBSERVABILITY_SALT?.trim() || randomUUID();
 type McpTraceState = {
   jsonRpcMethod: string | null;
+  jsonRpcVersion: string | null;
+  jsonRpcIdPresent: boolean;
   toolName: string | null;
+  argumentsValid: boolean | null;
   paymentPayloadPresent: boolean | null;
+  handlerReached: boolean;
   paymentVerified: boolean;
   challengeIssued: boolean;
   paymentErrorCategory: string | null;
@@ -199,8 +227,12 @@ if (publicMcpUrl.protocol !== "https:") {
 function createMcpTraceState(): McpTraceState {
   return {
     jsonRpcMethod: null,
+    jsonRpcVersion: null,
+    jsonRpcIdPresent: false,
     toolName: null,
+    argumentsValid: null,
     paymentPayloadPresent: null,
+    handlerReached: false,
     paymentVerified: false,
     challengeIssued: false,
     paymentErrorCategory: null,
@@ -471,6 +503,41 @@ const mcpPreflightInput = z.discriminatedUnion("toolName", [
     arguments: verifyConditionsInput,
   }),
 ]);
+
+function areMcpToolArgumentsValid(
+  toolName: SupportedMcpToolName,
+  value: unknown,
+): boolean {
+  if (toolName === "consultar_ia") {
+    return consultInput.safeParse(value).success;
+  }
+  if (toolName === "analisar_url") {
+    return analyzeUrlInput.safeParse(value).success;
+  }
+  return verifyConditionsInput.safeParse(value).success;
+}
+
+function getMcpPrePaymentRejectionCategory(
+  httpMethod: string,
+  contentType: string | null,
+  status: number,
+  state: McpTraceState,
+): McpPrePaymentRejectionCategory | null {
+  return classifyKnownToolPrePaymentRejection({
+    httpMethod,
+    contentType,
+    status,
+    jsonRpcVersion: state.jsonRpcVersion,
+    jsonRpcIdPresent: state.jsonRpcIdPresent,
+    jsonRpcMethod: state.jsonRpcMethod,
+    toolName: state.toolName,
+    argumentsValid: state.argumentsValid,
+    paymentPayloadPresent: state.paymentPayloadPresent,
+    handlerReached: state.handlerReached,
+    challengeIssued: state.challengeIssued,
+    paymentVerified: state.paymentVerified,
+  });
+}
 
 function getFeedbackInstructions(journeyId: string) {
   return {
@@ -962,7 +1029,7 @@ const paidAnalyzeUrlTool = createPaymentWrapper(paymentServer, {
     inputSchema: {
       type: 'object',
       properties: {
-        url: { type: 'string', format: 'uri', description: 'Public HTTP or HTTPS URL to analyze.' },
+        url: { type: 'string', pattern: PUBLIC_HTTP_URL_PATTERN, description: 'Public HTTP or HTTPS URL to analyze.' },
         objetivo: { type: 'string', description: 'Optional analysis objective.' },
       },
       required: ['url'],
@@ -991,7 +1058,7 @@ const paidVerifyConditionsTool = createPaymentWrapper(paymentServer, {
       properties: {
         url: {
           type: "string",
-          format: "uri",
+          pattern: PUBLIC_HTTP_URL_PATTERN,
           description: "Public HTTP or HTTPS URL to verify.",
         },
         condicoes: {
@@ -1033,6 +1100,7 @@ function adaptPaymentWrapperForMcpV2(
       if (trace) {
         trace.state.toolName = toolName;
         trace.state.paymentPayloadPresent = paymentPayloadPresent;
+        trace.state.handlerReached = true;
       }
 
       logMcpLifecycle("mcp_tool_attempt", {
@@ -1761,6 +1829,14 @@ app.use((req, res, next) => {
       res.getHeader("x-payment-response"),
     );
     const settlementResponsePresent = settlementResponse.present;
+    const mcpPrePaymentRejectionCategory = isMcpEndpoint
+      ? getMcpPrePaymentRejectionCategory(
+          req.method,
+          getSafeHeader(req.get("content-type"), 120),
+          res.statusCode,
+          mcpTraceState,
+        )
+      : null;
     const paymentOutcome = getPaymentOutcome({
       isPaidEndpoint,
       requestIntent,
@@ -1784,6 +1860,7 @@ app.use((req, res, next) => {
       isDiscovery ? "discovery" :
       isPreflightEndpoint && res.statusCode < 400 ? "preflight_ready" :
       isPreflightEndpoint ? "preflight_invalid" :
+      isMcpEndpoint && mcpPrePaymentRejectionCategory !== null ? "mcp_pre_payment_rejection" :
       isMcpEndpoint && res.statusCode >= 400 ? "mcp_rejection" :
       isMcpEndpoint && mcpPaymentOutcome === "settled" ? "mcp_paid_success" :
       isMcpEndpoint && mcpPaymentOutcome === "settlement_failed" ? "mcp_settlement_error" :
@@ -1864,6 +1941,13 @@ app.use((req, res, next) => {
         ? mcpTraceState.paymentErrorCategory
         : null,
       mcpPaymentOutcome,
+      mcpHandlerReached: isMcpEndpoint
+        ? mcpTraceState.handlerReached
+        : null,
+      mcpArgumentsValid: isMcpEndpoint
+        ? mcpTraceState.argumentsValid
+        : null,
+      mcpPrePaymentRejectionCategory,
       mcpExecutionSucceeded: isMcpEndpoint
         ? mcpTraceState.executionSucceeded
         : null,
@@ -1964,6 +2048,11 @@ app.use((req, res, next) => {
     res.setHeader("x-feedback-reasons", FEEDBACK_REASONS.join(","));
     res.setHeader("x-feedback-stages", FEEDBACK_STAGES.join(","));
     res.setHeader("x-feedback-intents", FEEDBACK_INTENTS.join(","));
+    res.setHeader("x-payment-flow", "x402-v2");
+    res.setHeader(
+      "x-payment-instructions",
+      `${PUBLIC_SERVICE_URL}/.well-known/x402`,
+    );
   }
   next();
 });
@@ -1994,7 +2083,7 @@ const requireAnalyzePayment = paymentMiddleware(
           inputSchema: {
             type: 'object',
             properties: {
-              url: { type: 'string', format: 'uri', description: 'Public HTTP or HTTPS URL to analyze.' },
+              url: { type: 'string', pattern: PUBLIC_HTTP_URL_PATTERN, description: 'Public HTTP or HTTPS URL to analyze.' },
               objetivo: { type: 'string', description: 'Optional analysis objective.' },
             },
             required: ['url'],
@@ -2040,7 +2129,7 @@ const requireVerifyConditionsPayment = paymentMiddleware(
             properties: {
               url: {
                 type: "string",
-                format: "uri",
+                pattern: PUBLIC_HTTP_URL_PATTERN,
                 description: "Public HTTP or HTTPS URL to verify.",
               },
               condicoes: {
@@ -2098,7 +2187,7 @@ app.get("/health", (_req, res) => {
     model: OPENAI_MODEL,
     version: SERVICE_VERSION,
     publicMcpServerUrl: PUBLIC_MCP_SERVER_URL,
-    tools: ["consultar_ia", "analisar_url", "verificar_condicoes"],
+    tools: [...SUPPORTED_MCP_TOOL_NAMES],
     paidEndpoint: {
       method: "POST",
       path: "/analyze",
@@ -2135,6 +2224,11 @@ app.get("/", (_req, res) => {
       feedback: `POST ${PUBLIC_SERVICE_URL}/feedback`,
       health: `${PUBLIC_SERVICE_URL}/health`,
     },
+    continuation: {
+      analyze: ANALYZE_PAYMENT_CONTINUATION,
+      verifyConditions: VERIFY_PAYMENT_CONTINUATION,
+      mcp: MCP_PAYMENT_CONTINUATION,
+    },
   });
 });
 
@@ -2162,6 +2256,7 @@ app.get("/.well-known/x402", (_req, res) => {
         price: ANALYZE_PRICE,
         network: X402_NETWORK,
         paymentHeader: "payment-required",
+        continuation: ANALYZE_PAYMENT_CONTINUATION,
         description: "EN: Analyze a public web page and return a structured report with summary, facts, risks, and recommended actions. PT: Analisa uma página pública e devolve um relatório estruturado com resumo, factos, riscos e ações recomendadas.",
       },
       {
@@ -2170,6 +2265,7 @@ app.get("/.well-known/x402", (_req, res) => {
         price: VERIFY_PRICE,
         network: X402_NETWORK,
         paymentHeader: "payment-required",
+        continuation: VERIFY_PAYMENT_CONTINUATION,
         description:
                   "EN: Verify 1 to 10 conditions about a seller, product, offer, policy, or claim before an AI agent acts. Returns a confirmed, rejected, or uncertain decision for every condition, supporting evidence when available, verificationId, and SHA-256 pageHash. PT: Verifica entre 1 e 10 condições antes de um agente de IA agir e devolve decisão e evidência auditável por condição.",
         },
@@ -2177,6 +2273,7 @@ app.get("/.well-known/x402", (_req, res) => {
         path: "/mcp",
         method: "POST",
         protocol: "Model Context Protocol",
+        continuation: MCP_PAYMENT_CONTINUATION,
         description: "EN: MCP tools for evidence-backed verification, paid public URL analysis, and AI consultation. PT: Ferramentas MCP para verificação baseada em evidência, análise paga de URLs públicas e consulta de IA.",
       },
     ],
@@ -2188,6 +2285,11 @@ app.get("/.well-known/x402", (_req, res) => {
       stages: FEEDBACK_STAGES,
       intents: FEEDBACK_INTENTS,
       freeTextAccepted: false,
+    },
+    continuation: {
+      analyze: ANALYZE_PAYMENT_CONTINUATION,
+      verifyConditions: VERIFY_PAYMENT_CONTINUATION,
+      mcp: MCP_PAYMENT_CONTINUATION,
     },
   });
 });
@@ -2243,6 +2345,7 @@ app.get("/openapi.json", (_req, res) => {
             "402": {
               description:
                 "Pagamento x402 necessário. A resposta também anuncia o endpoint e os valores normalizados de feedback, caso o cliente não prossiga.",
+              "x-payment-continuation": ANALYZE_PAYMENT_CONTINUATION,
               headers: {
                 "payment-required": {
                   description: "Condições de pagamento x402.",
@@ -2302,6 +2405,7 @@ app.get("/openapi.json", (_req, res) => {
             "402": {
               description:
                 "Pagamento x402 necessário. A resposta também anuncia o endpoint e os valores normalizados de feedback, caso o cliente não prossiga.",
+              "x-payment-continuation": VERIFY_PAYMENT_CONTINUATION,
               headers: {
                 "payment-required": {
                   description: "Condições de pagamento x402.",
@@ -2540,6 +2644,7 @@ app.get("/openapi.json", (_req, res) => {
         post: {
           summary: "Endpoint Model Context Protocol",
           tags: ["MCP"],
+          "x-payment-continuation": MCP_PAYMENT_CONTINUATION,
           responses: {
             "200": { description: "Resposta MCP." },
           },
@@ -2577,6 +2682,11 @@ app.get("/agents.json", (_req, res) => {
       verifyPrice: VERIFY_PRICE,
       analyzePrice: ANALYZE_PRICE,
       consultPrice: CONSULT_PRICE,
+    },
+    continuation: {
+      analyze: ANALYZE_PAYMENT_CONTINUATION,
+      verifyConditions: VERIFY_PAYMENT_CONTINUATION,
+      mcp: MCP_PAYMENT_CONTINUATION,
     },
     feedback: {
       optional: true,
@@ -2617,7 +2727,9 @@ app.get("/llms.txt", (_req, res) => {
 ## Pagamento
 
 Os endpoints /analyze e /verify-conditions requerem pagamento x402 em USDC na rede ${X402_NETWORK}.
-Após receber HTTP 402, lê o cabeçalho payment-required, efetua o pagamento e repete o mesmo pedido.
+Fluxo REST completo: faz primeiro o preflight gratuito; envia o pedido sem assinatura; ao receber HTTP 402 lê payment-required; valida rede, ativo, montante e payTo; autoriza a assinatura; repete exatamente o mesmo método, URL, JSON e x-journey-id com payment-signature; confirma HTTP 200 e payment-response.
+Fluxo MCP completo: faz POST /preflight/mcp; liga a ${PUBLIC_MCP_SERVER_URL}; chama a mesma ferramenta com os argumentos validados; valida os requisitos x402 devolvidos; autoriza o pagamento; repete tools/call com os mesmos argumentos e x402/payment em _meta; confirma o recibo de liquidação.
+Clientes automáticos recomendados: @x402/fetch para REST e @x402/mcp para MCP. Nunca envies chaves privadas, credenciais Railway/GitHub ou chaves OpenAI ao serviço.
 
 ## Pedido de exemplo
 
@@ -2642,11 +2754,7 @@ app.post("/preflight/mcp", (req, res) => {
         "Send a supported toolName and its complete arguments object.",
       messagePt:
         "Envie um toolName suportado e o respetivo objeto arguments completo.",
-      supportedTools: [
-        "consultar_ia",
-        "analisar_url",
-        "verificar_condicoes",
-      ],
+      supportedTools: [...SUPPORTED_MCP_TOOL_NAMES],
       journey: {
         id: journeyId,
         header: "x-journey-id",
@@ -2687,6 +2795,7 @@ app.post("/preflight/mcp", (req, res) => {
       price,
       nextStep:
         "Connect to the MCP URL, call the validated tool with the same arguments, read the x402 challenge, authorize it, and retry with the payment payload.",
+      continuation: MCP_PAYMENT_CONTINUATION,
     },
     feedback: getFeedbackInstructions(journeyId),
   });
@@ -2746,6 +2855,7 @@ app.post("/preflight/analyze", (req, res) => {
       price: ANALYZE_PRICE,
       nextStep:
         "Send the identical JSON body to /analyze. On HTTP 402, read payment-required, authorize the payment, then repeat the identical POST with the x402 payment signature.",
+      continuation: ANALYZE_PAYMENT_CONTINUATION,
     },
     output: {
       fields: ["source", "title", "report"],
@@ -2816,6 +2926,7 @@ app.post("/preflight/verify-conditions", (req, res) => {
       price: VERIFY_PRICE,
       nextStep:
         "Send the identical JSON body to /verify-conditions. On HTTP 402, read payment-required, authorize the payment, then repeat the identical POST with the x402 payment signature.",
+      continuation: VERIFY_PAYMENT_CONTINUATION,
     },
     output: {
       fields: [
@@ -2891,6 +3002,11 @@ app.all("/mcp", (req, res) => {
     typeof bodyRecord?.method === "string"
       ? bodyRecord.method.slice(0, 200)
       : null;
+  const jsonRpcVersion =
+    typeof bodyRecord?.jsonrpc === "string"
+      ? bodyRecord.jsonrpc.slice(0, 20)
+      : null;
+  const jsonRpcIdPresent = bodyRecord ? "id" in bodyRecord : false;
   const params =
     bodyRecord?.params !== null &&
     typeof bodyRecord?.params === "object" &&
@@ -2903,6 +3019,11 @@ app.all("/mcp", (req, res) => {
         .replace(/[^A-Za-z0-9_-]/g, "?")
         .slice(0, 100)
       : null;
+  const toolArguments =
+    jsonRpcMethod === "tools/call" ? params?.arguments : null;
+  const argumentsValid = isSupportedMcpToolName(toolName)
+    ? areMcpToolArgumentsValid(toolName, toolArguments)
+    : null;
   const meta =
     params?._meta !== null &&
     typeof params?._meta === "object" &&
@@ -2916,7 +3037,10 @@ app.all("/mcp", (req, res) => {
   const state = res.locals.mcpTraceState as McpTraceState;
 
   state.jsonRpcMethod = jsonRpcMethod;
+  state.jsonRpcVersion = jsonRpcVersion;
+  state.jsonRpcIdPresent = jsonRpcIdPresent;
   state.toolName = toolName;
+  state.argumentsValid = argumentsValid;
   state.paymentPayloadPresent = paymentPayloadPresent;
 
   const trace: McpRequestTrace = {
@@ -2943,6 +3067,35 @@ app.all("/mcp", (req, res) => {
   };
 
   res.on("finish", () => {
+    const prePaymentRejectionCategory =
+      getMcpPrePaymentRejectionCategory(
+        req.method,
+        getSafeHeader(req.get("content-type"), 120),
+        res.statusCode,
+        state,
+      );
+
+    if (prePaymentRejectionCategory !== null) {
+      console.log(JSON.stringify({
+        level: "warn",
+        timestamp: new Date().toISOString(),
+        event: "mcp_pre_payment_rejection",
+        requestId: trace.requestId,
+        railwayRequestId: trace.railwayRequestId,
+        railwayEdge: trace.railwayEdge,
+        requestStartUnixMs: trace.requestStartUnixMs,
+        journeyId: trace.journeyId,
+        journeyIdSource: trace.journeyIdSource,
+        sourceFingerprint: trace.sourceFingerprint,
+        clientFingerprint: trace.clientFingerprint,
+        userAgent: trace.userAgent,
+        status: res.statusCode,
+        toolName,
+        category: prePaymentRejectionCategory,
+        argumentKeys: getSafeBodyKeys(toolArguments),
+      }));
+    }
+
     if (res.statusCode < 400) return;
 
     console.log(JSON.stringify({
@@ -2968,12 +3121,12 @@ app.all("/mcp", (req, res) => {
       mcpSessionIdPresent: Boolean(req.get("mcp-session-id")),
       bodyKind,
       bodyKeys: getSafeBodyKeys(body),
-      jsonRpcVersion: typeof bodyRecord?.jsonrpc === "string"
-        ? bodyRecord.jsonrpc.slice(0, 20)
-        : null,
-      jsonRpcIdPresent: bodyRecord ? "id" in bodyRecord : false,
+      jsonRpcVersion,
+      jsonRpcIdPresent,
       jsonRpcMethod,
       toolName,
+      argumentsValid,
+      prePaymentRejectionCategory,
       paymentPayloadPresent,
       handlerErrorCode: state.handlerErrorCode,
       handlerErrorMessage: state.handlerErrorMessage,

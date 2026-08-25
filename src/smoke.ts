@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-const SERVICE_VERSION = "1.2.5";
+const SERVICE_VERSION = "1.2.6";
 const SERVICE_URL = (
   process.env.SERVICE_URL ??
   "https://mcp-x402-production.up.railway.app"
@@ -107,6 +107,10 @@ async function main(): Promise<void> {
   const discoveryBody = await discovery.json() as {
     endpoints?: unknown[];
     feedback?: { endpoint?: unknown; reasons?: unknown; intents?: unknown };
+    continuation?: {
+      analyze?: { steps?: unknown[] };
+      mcp?: { automaticClient?: unknown; steps?: unknown[] };
+    };
   };
   assert(
     Array.isArray(discoveryBody.endpoints) &&
@@ -118,6 +122,14 @@ async function main(): Promise<void> {
       Array.isArray(discoveryBody.feedback.reasons) &&
       Array.isArray(discoveryBody.feedback.intents),
     "Discovery x402 sem metadata completa de feedback",
+  );
+  assert(
+    Array.isArray(discoveryBody.continuation?.analyze?.steps) &&
+      discoveryBody.continuation.analyze.steps.length === 5 &&
+      discoveryBody.continuation?.mcp?.automaticClient === "@x402/mcp" &&
+      Array.isArray(discoveryBody.continuation.mcp.steps) &&
+      discoveryBody.continuation.mcp.steps.length === 6,
+    "Discovery x402 sem percurso completo de continuação do pagamento",
   );
 
   const openApi = await expectStatus("OpenAPI feedback contract", "/openapi.json", 200);
@@ -167,6 +179,7 @@ async function main(): Promise<void> {
   );
   const analyzePreflightBody = await analyzePreflight.json() as {
     ready?: unknown;
+    payment?: { continuation?: { steps?: unknown[] } };
     feedback?: { url?: unknown; reasons?: unknown; intents?: unknown };
   };
   assert(analyzePreflightBody.ready === true, "Preflight analyze não ficou pronto");
@@ -175,6 +188,10 @@ async function main(): Promise<void> {
       Array.isArray(analyzePreflightBody.feedback.reasons) &&
       Array.isArray(analyzePreflightBody.feedback.intents),
     "Preflight analyze sem instruções completas de feedback",
+  );
+  assert(
+    analyzePreflightBody.payment?.continuation?.steps?.length === 5,
+    "Preflight analyze sem continuação x402 estruturada",
   );
 
   const analyzeChallenge = await expectStatus(
@@ -190,6 +207,12 @@ async function main(): Promise<void> {
   assert(
     Boolean(analyzeChallenge.headers.get("payment-required")),
     "Analyze 402 sem cabeçalho payment-required",
+  );
+  assert(
+    analyzeChallenge.headers.get("x-payment-flow") === "x402-v2" &&
+      analyzeChallenge.headers.get("x-payment-instructions") ===
+        `${SERVICE_URL}/.well-known/x402`,
+    "Analyze 402 sem ligação às instruções de continuação",
   );
   assert(
     analyzeChallenge.headers.get("x-feedback-endpoint") ===
@@ -250,6 +273,7 @@ async function main(): Promise<void> {
   const mcpPreflightBody = await mcpPreflight.json() as {
     ready?: unknown;
     target?: { url?: unknown; toolName?: unknown };
+    payment?: { continuation?: { steps?: unknown[] } };
     feedback?: { url?: unknown; reasons?: unknown; intents?: unknown };
   };
   assert(mcpPreflightBody.ready === true, "Preflight MCP não ficou pronto");
@@ -266,6 +290,10 @@ async function main(): Promise<void> {
       Array.isArray(mcpPreflightBody.feedback.reasons) &&
       Array.isArray(mcpPreflightBody.feedback.intents),
     "Preflight MCP sem instruções completas de feedback",
+  );
+  assert(
+    mcpPreflightBody.payment?.continuation?.steps?.length === 6,
+    "Preflight MCP sem continuação x402 estruturada",
   );
 
   const wrongMethod = await expectStatus(

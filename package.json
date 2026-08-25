@@ -1,10 +1,10 @@
 {
   "name": "mcp-x402",
-  "version": "1.2.5",
+  "version": "1.2.6",
   "description": "",
   "main": "dist/server.js",
   "scripts": {
-    "test": "npm run build",
+    "test": "npm run build && node --test dist/improvements.test.js",
     "dev": "tsx src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",

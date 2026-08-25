@@ -244,6 +244,24 @@ The MCP buyer never prints the private key and rejects any payment that:
 - does not use the configured Base USDC contract;
 - exceeds $0.05 USDC.
 
+## Machine-Readable Payment Continuation
+
+The discovery document at `GET /.well-known/x402` and every successful free
+preflight response publish a complete continuation sequence. A compatible
+agent no longer has to infer what to do after the first unpaid request:
+
+1. run the free preflight and keep its `x-journey-id`;
+2. send the validated request without a payment signature;
+3. read and verify the `payment-required` requirements;
+4. authorize only the expected network, asset, amount and recipient;
+5. retry the identical request with the x402 payment payload;
+6. verify both delivery and the settlement receipt.
+
+REST metadata recommends `@x402/fetch`; MCP metadata recommends `@x402/mcp`.
+Paid responses also link back to the discovery instructions through
+`x-payment-instructions`. The flow never requests a private key, Railway or
+GitHub credentials, or an OpenAI key.
+
 ## Optional Conversion Feedback
 
 Every paid HTTP or MCP response advertises `x-feedback-endpoint` and the
@@ -296,7 +314,7 @@ npm run smoke
 ```
 
 Use `SERVICE_URL` to target another deployment. The test uses one persistent
-`x-journey-id`, sends `User-Agent: Diogo-Smoke/1.2.5`, verifies that the MCP
+`x-journey-id`, sends `User-Agent: Diogo-Smoke/1.2.6`, verifies that the MCP
 x402 challenge advertises the public HTTPS endpoint with `type=mcp` and the
 correct `toolName`, and never creates or
 signs a payment.
@@ -318,6 +336,10 @@ deduplicated.
 Rejected MCP requests include safe protocol diagnostics such as method,
 content type, `Accept`, JSON-RPC shape and the SDK error classification. All
 events include the request and journey correlation fields when available.
+Calls to a known paid tool that never reach its payment wrapper additionally
+emit `mcp_pre_payment_rejection`, classified as invalid method, content type,
+JSON-RPC envelope, arguments, transport/protocol rejection, or an otherwise
+unreached handler. Argument values and payment payloads are never logged.
 OpenAI usage events inherit the same request, journey, client, and source
 correlation. Railway's `X-Railway-Request-Id`, edge POP, and request-start time
 are also recorded, while client source fingerprints use Railway's stable

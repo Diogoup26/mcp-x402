@@ -18,7 +18,7 @@ const MCP_URL =
   process.env.MCP_ENDPOINT ??
   "https://mcp-x402-production.up.railway.app/mcp";
 const SERVICE_ORIGIN = new URL(MCP_URL).origin;
-const SERVICE_VERSION = "1.2.5";
+const SERVICE_VERSION = "1.2.6";
 const USER_AGENT = `Diogo-MCP-Buyer/${SERVICE_VERSION}`;
 const NETWORK = "eip155:8453";
 const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
