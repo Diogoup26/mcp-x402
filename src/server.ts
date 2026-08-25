@@ -39,6 +39,12 @@ import {
   type McpPrePaymentRejectionCategory,
   type SupportedMcpToolName,
 } from "./mcp-observability.js";
+import {
+  BAZAAR_ARGUMENT_DESCRIPTIONS,
+  BAZAAR_TOOL_DESCRIPTIONS,
+  MCP_ARGUMENT_DESCRIPTIONS,
+  MCP_TOOL_DESCRIPTIONS,
+} from "./tool-metadata.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const HOST = process.env.HOST ?? "0.0.0.0";
@@ -73,7 +79,7 @@ const X402_NETWORK = (process.env.X402_NETWORK ?? "eip155:84532") as `${string}:
 const CONSULT_PRICE = "$0.02";
 const ANALYZE_PRICE = "$0.05";
 const VERIFY_PRICE = "$0.05";
-const SERVICE_VERSION = "1.2.6";
+const SERVICE_VERSION = "1.2.7";
 const X402_FACILITATOR_URL = "https://x402.org/facilitator";
 const DISCOVERY_PATHS = new Set([
   "/",
@@ -458,12 +464,12 @@ function createMcpPaymentHooks(
 }
 
 const analyzeUrlInput = z.object({
-  url: z.string().url().max(2048).describe("URL público HTTP ou HTTPS"),
+  url: z.string().url().max(2048).describe(MCP_ARGUMENT_DESCRIPTIONS.analysisUrl),
   objetivo: z
     .string()
     .max(500)
     .optional()
-    .describe("Objetivo opcional da análise"),
+    .describe(MCP_ARGUMENT_DESCRIPTIONS.analysisObjective),
 });
 
 const consultInput = z.object({
@@ -471,22 +477,22 @@ const consultInput = z.object({
     .string()
     .min(1)
     .max(4000)
-    .describe("Pergunta ou instrução para a IA"),
+    .describe(MCP_ARGUMENT_DESCRIPTIONS.prompt),
 });
 
 const verifyConditionsInput = z.object({
-  url: z.string().url().max(2048).describe("URL público HTTP ou HTTPS"),
+  url: z.string().url().max(2048).describe(MCP_ARGUMENT_DESCRIPTIONS.verificationUrl),
   condicoes: z
     .array(z.string().trim().min(3).max(300))
     .min(1)
     .max(10)
-    .describe("Condições concretas que a página tem de cumprir"),
+    .describe(MCP_ARGUMENT_DESCRIPTIONS.conditions),
   contexto: z
     .string()
     .trim()
     .max(500)
     .optional()
-    .describe("Contexto opcional para interpretar as condições"),
+    .describe(MCP_ARGUMENT_DESCRIPTIONS.verificationContext),
 });
 
 const mcpPreflightInput = z.discriminatedUnion("toolName", [
@@ -1000,12 +1006,12 @@ const paidConsultTool = createPaymentWrapper(paymentServer, {
   },
   extensions: declareDiscoveryExtension({
     toolName: 'consultar_ia',
-    description: 'Ask the OpenAI model a question and receive a concise answer.',
+    description: BAZAAR_TOOL_DESCRIPTIONS.consultar_ia,
     transport: 'streamable-http',
     inputSchema: {
       type: 'object',
       properties: {
-        prompt: { type: 'string', description: 'Question or instruction for the AI.' },
+        prompt: { type: 'string', description: BAZAAR_ARGUMENT_DESCRIPTIONS.prompt },
       },
       required: ['prompt'],
       additionalProperties: false,
@@ -1024,13 +1030,13 @@ const paidAnalyzeUrlTool = createPaymentWrapper(paymentServer, {
   },
   extensions: declareDiscoveryExtension({
     toolName: 'analisar_url',
-    description: 'Analyze a public web page and return a report with summary, facts, risks and recommended actions.',
+    description: BAZAAR_TOOL_DESCRIPTIONS.analisar_url,
     transport: 'streamable-http',
     inputSchema: {
       type: 'object',
       properties: {
-        url: { type: 'string', pattern: PUBLIC_HTTP_URL_PATTERN, description: 'Public HTTP or HTTPS URL to analyze.' },
-        objetivo: { type: 'string', description: 'Optional analysis objective.' },
+        url: { type: 'string', pattern: PUBLIC_HTTP_URL_PATTERN, description: BAZAAR_ARGUMENT_DESCRIPTIONS.analysisUrl },
+        objetivo: { type: 'string', description: BAZAAR_ARGUMENT_DESCRIPTIONS.analysisObjective },
       },
       required: ['url'],
       additionalProperties: false,
@@ -1050,8 +1056,7 @@ const paidVerifyConditionsTool = createPaymentWrapper(paymentServer, {
   },
   extensions: declareDiscoveryExtension({
     toolName: "verificar_condicoes",
-    description:
-      "Verify whether a public web page meets concrete conditions. Returns confirmed, rejected or uncertain with quoted evidence.",
+    description: BAZAAR_TOOL_DESCRIPTIONS.verificar_condicoes,
     transport: "streamable-http",
     inputSchema: {
       type: "object",
@@ -1059,18 +1064,18 @@ const paidVerifyConditionsTool = createPaymentWrapper(paymentServer, {
         url: {
           type: "string",
           pattern: PUBLIC_HTTP_URL_PATTERN,
-          description: "Public HTTP or HTTPS URL to verify.",
+          description: BAZAAR_ARGUMENT_DESCRIPTIONS.verificationUrl,
         },
         condicoes: {
           type: "array",
           items: { type: "string" },
           minItems: 1,
           maxItems: 10,
-          description: "Concrete conditions to verify.",
+          description: BAZAAR_ARGUMENT_DESCRIPTIONS.conditions,
         },
         contexto: {
           type: "string",
-          description: "Optional context for interpreting the conditions.",
+          description: BAZAAR_ARGUMENT_DESCRIPTIONS.verificationContext,
         },
       },
       required: ["url", "condicoes"],
@@ -1212,7 +1217,7 @@ const handler = createMcpHandler(() => {
     "consultar_ia",
     {
       title: "Consultar IA",
-      description: "Envia uma pergunta para a OpenAI e devolve a resposta.",
+      description: MCP_TOOL_DESCRIPTIONS.consultar_ia,
       inputSchema: consultInput,
     },
     paidConsultToolV2(async ({ prompt }) => {
@@ -1233,8 +1238,7 @@ const handler = createMcpHandler(() => {
     "analisar_url",
     {
       title: "Analisar página web",
-      description:
-        "Extrai uma página web pública e produz um relatório com resumo, factos, riscos e ações recomendadas.",
+      description: MCP_TOOL_DESCRIPTIONS.analisar_url,
       inputSchema: analyzeUrlInput,
     },
     paidAnalyzeUrlToolV2(async ({ url, objetivo }) => {
@@ -1263,8 +1267,7 @@ const handler = createMcpHandler(() => {
     "verificar_condicoes",
     {
       title: "Verificar condições",
-      description:
-        "Verifica se uma página web pública cumpre condições concretas e devolve decisão confirmada, rejeitada ou incerta com provas textuais.",
+      description: MCP_TOOL_DESCRIPTIONS.verificar_condicoes,
       inputSchema: verifyConditionsInput,
     },
     paidVerifyConditionsToolV2(async ({ url, condicoes, contexto }) => {

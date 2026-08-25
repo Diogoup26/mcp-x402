@@ -314,7 +314,7 @@ npm run smoke
 ```
 
 Use `SERVICE_URL` to target another deployment. The test uses one persistent
-`x-journey-id`, sends `User-Agent: Diogo-Smoke/1.2.6`, verifies that the MCP
+`x-journey-id`, sends `User-Agent: Diogo-Smoke/1.2.7`, verifies that the MCP
 x402 challenge advertises the public HTTPS endpoint with `type=mcp` and the
 correct `toolName`, and never creates or
 signs a payment.

@@ -9,6 +9,11 @@ import {
   classifyKnownToolPrePaymentRejection,
   type McpPrePaymentDiagnostic,
 } from "./mcp-observability.js";
+import {
+  BAZAAR_TOOL_DESCRIPTIONS,
+  MCP_ARGUMENT_DESCRIPTIONS,
+  MCP_TOOL_DESCRIPTIONS,
+} from "./tool-metadata.js";
 
 const validDiagnostic: McpPrePaymentDiagnostic = {
   httpMethod: "POST",
@@ -100,4 +105,20 @@ test("publishes a complete and reversible x402 continuation path", () => {
   assert.equal(mcp.steps.at(-1)?.expectedPaymentResponseSuccess, true);
   assert.equal(new RegExp(PUBLIC_HTTP_URL_PATTERN).test("https://example.com"), true);
   assert.equal(new RegExp(PUBLIC_HTTP_URL_PATTERN).test("ftp://example.com"), false);
+});
+
+test("publishes tool metadata with selection guidance and result boundaries", () => {
+  assert.match(MCP_TOOL_DESCRIPTIONS.consultar_ia, /analisar_url/);
+  assert.match(MCP_TOOL_DESCRIPTIONS.consultar_ia, /verificar_condicoes/);
+  assert.match(MCP_TOOL_DESCRIPTIONS.analisar_url, /Não consulta fontes externas/);
+  assert.match(MCP_TOOL_DESCRIPTIONS.verificar_condicoes, /verificationId/);
+  assert.match(MCP_TOOL_DESCRIPTIONS.verificar_condicoes, /pageHash/);
+
+  for (const description of Object.values(BAZAAR_TOOL_DESCRIPTIONS)) {
+    assert.match(description, /^Use /);
+    assert.ok(description.length >= 200);
+  }
+
+  assert.match(MCP_ARGUMENT_DESCRIPTIONS.analysisObjective, /não é tratado como prova/);
+  assert.match(MCP_ARGUMENT_DESCRIPTIONS.verificationContext, /nunca como prova/);
 });

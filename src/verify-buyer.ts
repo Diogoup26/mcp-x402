@@ -19,7 +19,7 @@ const VERIFY_ENDPOINT =
   process.env.VERIFY_ENDPOINT ??
   "https://mcp-x402-production.up.railway.app/verify-conditions";
 const SERVICE_ORIGIN = new URL(VERIFY_ENDPOINT).origin;
-const USER_AGENT = "Diogo-REST-Verify/1.2.6";
+const USER_AGENT = "Diogo-REST-Verify/1.2.7";
 
 let parsedCli: ReturnType<typeof parseFeedbackOptions>;
 try {
