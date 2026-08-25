@@ -5,6 +5,7 @@ on:
   push:
     branches: [main]
     paths:
+      - "server.json"
       - ".github/workflows/publish-mcp-registry.yml"
 
 concurrency:
