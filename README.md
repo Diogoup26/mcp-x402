@@ -1,4 +1,10 @@
+<p align="center">
+  <img src="assets/mcp-x402-logo.png" alt="MCP x402 logo" width="160" />
+</p>
+
 # MCP x402 — Evidence-Backed Web Verification for AI Agents
+
+[![AllMCPs Verified](https://allmcps.com/api/badge/mcp-x402-evidence-backed-web-verification)](https://allmcps.com/mcp/mcp-x402-evidence-backed-web-verification?verify=b470dbc0-c40c-43b7-b705-c3c789b04402)
 
 ## Verify a seller, product, offer, policy, or claim before an agent acts
 
