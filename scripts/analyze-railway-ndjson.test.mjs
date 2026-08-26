@@ -90,7 +90,7 @@ test("reads structured lifecycle data embedded in a Railway message field", asyn
     timestamp: "2026-08-26T02:00:00Z",
     event: "http_request",
     journeyId: "external-embedded",
-    userAgent: "AgentClient/1.0",
+    userAgent: "Mozilla/5.0 (compatible external client)",
     path: "/mcp",
     status: 200,
     mcpArgumentsValid: true,
@@ -118,4 +118,91 @@ test("reads structured lifecycle data embedded in a Railway message field", asyn
     "execution",
     "success",
   ]);
+});
+
+test("joins Railway HTTP rows to app rows and does not treat server journey IDs as visitors", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mcp-x402-logs-"));
+  const appFile = join(directory, "app.ndjson");
+  const httpFile = join(directory, "http.ndjson");
+  const appRows = [
+    {
+      timestamp: "2026-08-26T03:00:00Z",
+      event: "http_request",
+      journeyId: "server-request-1",
+      journeyIdSource: "server",
+      clientFingerprint: "client-a",
+      sourceFingerprint: "source-a",
+      railwayRequestId: "edge-1",
+      requestId: "internal-1",
+      userAgent: "CoinbaseBazaarDiscovery/1.0",
+      path: "/.well-known/x402",
+      status: 200,
+    },
+    {
+      timestamp: "2026-08-26T03:10:00Z",
+      event: "http_request",
+      journeyId: "server-request-2",
+      journeyIdSource: "server",
+      clientFingerprint: "client-a",
+      sourceFingerprint: "source-a",
+      railwayRequestId: "edge-2",
+      requestId: "internal-2",
+      userAgent: "CoinbaseBazaarDiscovery/1.0",
+      path: "/openapi.json",
+      status: 200,
+    },
+  ];
+  const httpRows = [
+    { timestamp: "2026-08-26T03:00:00.010Z", requestId: "edge-1", clientUa: "CoinbaseBazaarDiscovery/1.0", path: "/.well-known/x402", httpStatus: 200 },
+    { timestamp: "2026-08-26T03:10:00.010Z", requestId: "edge-2", clientUa: "CoinbaseBazaarDiscovery/1.0", path: "/openapi.json", httpStatus: 200 },
+  ];
+  await writeFile(appFile, `${appRows.map(JSON.stringify).join("\n")}\n`, "utf8");
+  await writeFile(httpFile, `${httpRows.map(JSON.stringify).join("\n")}\n`, "utf8");
+
+  const report = await analyzeFiles([appFile, httpFile]);
+
+  assert.equal(report.summary.categories.probe_or_indexer, 1);
+  assert.equal(report.summary.potentialExternalJourneys, 0);
+  assert.equal(report.summary.requests.total, 2);
+  assert.equal(report.summary.requests.categories.probe_or_indexer, 2);
+  assert.equal(report.summary.correlation.correlatedRequests, 2);
+  assert.equal(report.summary.correlation.joinedAppAndHttpRequests, 2);
+  assert.equal(report.journeys[0].eventCount, 4);
+});
+
+test("counts only accepted normalized feedback, not invalid feedback probes", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mcp-x402-logs-"));
+  const file = join(directory, "feedback.ndjson");
+  const rows = [
+    {
+      timestamp: "2026-08-26T03:00:00Z",
+      event: "http_request",
+      userAgent: "Mozilla/5.0",
+      journeyId: "invalid-feedback",
+      journeyIdSource: "client",
+      path: "/feedback",
+      method: "POST",
+      status: 400,
+    },
+    {
+      timestamp: "2026-08-26T03:05:00Z",
+      event: "conversion_feedback",
+      userAgent: "Mozilla/5.0",
+      journeyId: "accepted-feedback",
+      journeyIdSource: "client",
+      path: "/feedback",
+      method: "POST",
+      status: 202,
+      reason: "other",
+    },
+  ];
+  await writeFile(file, `${rows.map(JSON.stringify).join("\n")}\n`, "utf8");
+
+  const report = await analyzeFiles([file]);
+  const invalid = report.journeys.find((journey) => journey.id === "journey:invalid-feedback");
+  const accepted = report.journeys.find((journey) => journey.id === "journey:accepted-feedback");
+
+  assert.equal(report.summary.feedbackJourneys, 1);
+  assert.equal(invalid.stages.includes("feedback"), false);
+  assert.equal(accepted.stages.includes("feedback"), true);
 });

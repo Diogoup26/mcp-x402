@@ -20,16 +20,27 @@ const FUNNEL_STAGES = [
 const KEY_GROUPS = {
   timestamp: ["timestamp", "@timestamp", "time", "createdat", "eventtimestamp"],
   journeyId: ["journeyid", "xjourneyid"],
+  journeyIdSource: ["journeyidsource"],
   clientFingerprint: ["clientfingerprint"],
   sourceFingerprint: ["sourcefingerprint"],
   requestId: ["requestid", "xrequestid"],
-  userAgent: ["useragent"],
+  railwayRequestId: ["railwayrequestid"],
+  userAgent: ["useragent", "clientua"],
   path: ["path", "requestpath", "route", "url"],
   method: ["method", "httpmethod"],
   status: ["status", "statuscode", "httpstatus"],
+  event: ["event"],
 };
 
-const PROBE_MARKERS = /(?:smithery|glama|coinbase|bazaar|allmcps|mcp\.so|pulsemcp|agentndx|crawler|spider|indexer|monitor|probe|uptime|bot\b)/i;
+const PROBE_MARKERS = /(?:smithery|glama|coinbase|bazaar|allmcps|mcp\.so|pulsemcp|agentndx|agent402|mcpbeat|sentineloracle|x402-census|x402register|touchstone|nitrograph|assay|mako-pulse|sasame|crawler|spider|indexer|monitor|probe|uptime|searchbot|bot\b|verifier|gort|builtwith|sec-scout)/i;
+
+const CATEGORY_PRIORITY = {
+  unknown: 0,
+  potential_external: 1,
+  probe_or_indexer: 2,
+  railway_healthcheck: 3,
+  own_test: 4,
+};
 
 function normalizedKey(key) {
   return String(key).toLowerCase().replace(/[^a-z0-9@]/g, "");
@@ -101,6 +112,12 @@ function numericStatuses(record) {
     .filter(Number.isFinite);
 }
 
+function hasTopLevelKey(record, acceptedKeys) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) return false;
+  const accepted = new Set(acceptedKeys.map(normalizedKey));
+  return Object.keys(record).some((key) => accepted.has(normalizedKey(key)));
+}
+
 function searchableText(record) {
   const chunks = [JSON.stringify(record)];
   const seen = new Set();
@@ -126,14 +143,19 @@ function searchableText(record) {
 function classifyTraffic(record) {
   const userAgents = collectValues(record, KEY_GROUPS.userAgent);
   const journeyIds = collectValues(record, KEY_GROUPS.journeyId);
+  const paths = collectValues(record, KEY_GROUPS.path);
   const combined = [...userAgents, ...journeyIds].join(" ");
 
   if (userAgents.some((value) => /^Diogo-/i.test(value)) || journeyIds.some((value) => /^Diogo-/i.test(value))) {
     return "own_test";
   }
   if (userAgents.some((value) => /RailwayHealthcheck/i.test(value))) return "railway_healthcheck";
-  if (PROBE_MARKERS.test(combined)) return "probe_or_indexer";
-  if (userAgents.length > 0) return "potential_external";
+  if (PROBE_MARKERS.test(combined) || paths.some((value) => /%5c/i.test(value))) return "probe_or_indexer";
+  if (userAgents.length > 0) {
+    return userAgents.some((value) => /^Mozilla\/5\.0/i.test(value))
+      ? "potential_external"
+      : "probe_or_indexer";
+  }
   return "unknown";
 }
 
@@ -146,6 +168,7 @@ function detectStages(record) {
 
   if (
     paths.some((value) => /(?:agents\.json|llms\.txt|\.well-known|openapi|swagger)/.test(value)) ||
+    (paths.includes("/") && methods.some((value) => value === "GET" || value === "HEAD") && statuses.some((value) => value >= 200 && value < 300)) ||
     /(?:"method"\s*:\s*"initialize"|tools\/list|discovery_(?:request|success)|runtime_discovery)/.test(text)
   ) stages.add("discovery");
 
@@ -167,36 +190,152 @@ function detectStages(record) {
   }
   if (/(?:execution_(?:started|success|failed)|tool_execution|executing_tool|tool_call_started|"executionstartedat"\s*:\s*\d+|"mcpexecutionsucceeded"\s*:\s*(?:true|false))/.test(text)) stages.add("execution");
   if (/(?:delivery_success|request_succeeded|tool_success|execution_success|final_success|"funnelstage"\s*:\s*"(?:paid_success|mcp_paid_success)"|"(?:paymentoutcome|mcppaymentoutcome)"\s*:\s*"settled")/.test(text)) stages.add("success");
-  if (statuses.some((value) => value >= 400 && value !== 402) || /(?:final_error|execution_failed|delivery_error|request_failed|paid_retry_error|mcp_(?:settlement|execution)_error)/.test(text)) {
+  const cosmeticMissingAsset = paths.includes("/favicon.ico") && statuses.length > 0 && statuses.every((value) => value === 404);
+  if ((!cosmeticMissingAsset && statuses.some((value) => value >= 400 && value !== 402)) || /(?:final_error|execution_failed|delivery_error|request_failed|paid_retry_error|mcp_(?:settlement|execution)_error)/.test(text)) {
     stages.add("error");
   }
-  if (paths.some((value) => value.includes("/feedback")) || /feedback_(?:received|stored|submitted)/.test(text)) stages.add("feedback");
+  const acceptedFeedback = /(?:conversion_feedback|feedback_(?:received|stored|submitted))/.test(text);
+  const successfulFeedbackRequest =
+    paths.some((value) => value.includes("/feedback")) &&
+    statuses.some((value) => value >= 200 && value < 300);
+  if (acceptedFeedback || successfulFeedbackRequest) stages.add("feedback");
 
   return [...stages];
 }
 
 function eventIdentity(record) {
+  const requestId = firstValue(record, "requestId");
+  const railwayRequestId = firstValue(record, "railwayRequestId");
+  const isRailwayHttpRecord = hasTopLevelKey(record, ["httpStatus", "clientUa", "edgeRegion"]);
   return {
     journeyId: firstValue(record, "journeyId"),
+    journeyIdSource: firstValue(record, "journeyIdSource"),
     clientFingerprint: firstValue(record, "clientFingerprint"),
     sourceFingerprint: firstValue(record, "sourceFingerprint"),
-    requestId: firstValue(record, "requestId"),
+    requestId,
+    railwayRequestId,
+    requestCorrelationId: railwayRequestId ?? (isRailwayHttpRecord ? requestId : null),
     userAgent: firstValue(record, "userAgent"),
   };
 }
 
+function preferredCategory(categories) {
+  return categories.reduce(
+    (best, category) => CATEGORY_PRIORITY[category] > CATEGORY_PRIORITY[best] ? category : best,
+    "unknown",
+  );
+}
+
+function reconcileCorrelatedEvents(events) {
+  const correlated = new Map();
+  for (const event of events) {
+    const correlationId = event.identity.requestCorrelationId;
+    if (!correlationId) continue;
+    const group = correlated.get(correlationId) ?? [];
+    group.push(event);
+    correlated.set(correlationId, group);
+  }
+
+  let joinedAppAndHttpRequests = 0;
+  for (const group of correlated.values()) {
+    if (group.some((event) => event.isRailwayHttpRecord) && group.some((event) => event.eventName === "http_request")) {
+      joinedAppAndHttpRequests += 1;
+    }
+    const category = preferredCategory(group.map((event) => event.category));
+    const sharedIdentity = {};
+    for (const event of group) {
+      for (const [field, value] of Object.entries(event.identity)) {
+        if (!sharedIdentity[field] && value) sharedIdentity[field] = value;
+      }
+    }
+    for (const event of group) {
+      event.category = category;
+      for (const [field, value] of Object.entries(sharedIdentity)) {
+        if (!event.identity[field] && value) event.identity[field] = value;
+      }
+    }
+  }
+
+  return {
+    correlatedRequests: correlated.size,
+    joinedAppAndHttpRequests,
+  };
+}
+
+function reclassifyAutomatedBrowserTraffic(events) {
+  const browserGroups = new Map();
+  for (const event of events) {
+    if (event.category !== "potential_external" || !event.identity.userAgent) continue;
+    const group = browserGroups.get(event.identity.userAgent) ?? {
+      events: [],
+      requestIds: new Set(),
+      fingerprints: new Set(),
+      paths: new Set(),
+    };
+    group.events.push(event);
+    if (event.identity.requestCorrelationId) group.requestIds.add(event.identity.requestCorrelationId);
+    if (event.identity.clientFingerprint || event.identity.sourceFingerprint) {
+      group.fingerprints.add(`${event.identity.clientFingerprint ?? "-"}:${event.identity.sourceFingerprint ?? "-"}`);
+    }
+    if (event.requestPath) group.paths.add(event.requestPath);
+    browserGroups.set(event.identity.userAgent, group);
+  }
+
+  const automatedRequestIds = new Set();
+  for (const group of browserGroups.values()) {
+    const repeatedFingerprintPattern = group.fingerprints.size >= 5;
+    const highVolumeOrPathScan = group.requestIds.size >= 10 || group.paths.size >= 8;
+    if (!repeatedFingerprintPattern && !highVolumeOrPathScan) continue;
+    for (const event of group.events) {
+      if (event.identity.requestCorrelationId) automatedRequestIds.add(event.identity.requestCorrelationId);
+      event.category = "probe_or_indexer";
+    }
+  }
+
+  const rootEvents = events
+    .filter((event) => event.category === "potential_external" && event.requestPath === "/")
+    .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+  for (let start = 0; start < rootEvents.length; start += 1) {
+    const windowStart = Date.parse(rootEvents[start].timestamp);
+    const burst = [];
+    for (let index = start; index < rootEvents.length; index += 1) {
+      if (Date.parse(rootEvents[index].timestamp) - windowStart > 60_000) break;
+      burst.push(rootEvents[index]);
+    }
+    const fingerprints = new Set(
+      burst.map((event) => `${event.identity.clientFingerprint ?? "-"}:${event.identity.sourceFingerprint ?? "-"}`),
+    );
+    if (burst.length < 4 || fingerprints.size < 3) continue;
+    for (const event of burst) {
+      if (event.identity.requestCorrelationId) automatedRequestIds.add(event.identity.requestCorrelationId);
+      event.category = "probe_or_indexer";
+    }
+  }
+
+  if (automatedRequestIds.size > 0) {
+    for (const event of events) {
+      if (automatedRequestIds.has(event.identity.requestCorrelationId)) event.category = "probe_or_indexer";
+    }
+  }
+
+  return automatedRequestIds.size;
+}
+
 function sessionKey(event) {
   const identity = event.identity;
-  if (identity.journeyId) return `journey:${identity.journeyId}`;
-  if (identity.clientFingerprint || identity.sourceFingerprint) {
-    return `fingerprint:${identity.clientFingerprint ?? "-"}:${identity.sourceFingerprint ?? "-"}`;
+  if (identity.journeyId && identity.journeyIdSource !== "server") {
+    return `journey:${identity.journeyId}`;
   }
+  if (identity.clientFingerprint || identity.sourceFingerprint) {
+    return `fingerprint:${event.category}:${identity.clientFingerprint ?? "-"}:${identity.sourceFingerprint ?? "-"}:${identity.userAgent ?? "-"}`;
+  }
+  if (identity.userAgent) return `ua:${event.category}:${identity.userAgent}`;
+  if (identity.requestCorrelationId) return `request:${identity.requestCorrelationId}`;
   if (identity.requestId) return `request:${identity.requestId}`;
-  if (identity.userAgent) return `ua:${identity.userAgent}`;
   return `line:${event.file}:${event.line}`;
 }
 
-function reconstructJourneys(events, sessionMinutes = 15) {
+function reconstructJourneys(events, sessionMinutes = 30) {
   const buckets = new Map();
   for (const event of events) {
     const key = sessionKey(event);
@@ -245,6 +384,36 @@ function reconstructJourneys(events, sessionMinutes = 15) {
   });
 }
 
+function summarizeRequests(events) {
+  const requests = new Map();
+  for (const event of events) {
+    if (event.eventName !== "http_request" && !event.isRailwayHttpRecord) continue;
+    const requestKey = event.identity.requestCorrelationId ??
+      (event.eventName === "http_request" && event.identity.requestId ? `app:${event.identity.requestId}` : null);
+    if (!requestKey) continue;
+    const request = requests.get(requestKey) ?? {
+      category: "unknown",
+      stages: new Set(),
+      events: 0,
+    };
+    request.category = preferredCategory([request.category, event.category]);
+    for (const stage of event.stages) request.stages.add(stage);
+    request.events += 1;
+    requests.set(requestKey, request);
+  }
+
+  const values = [...requests.values()];
+  return {
+    total: values.length,
+    categories: Object.fromEntries(
+      Object.keys(CATEGORY_PRIORITY).map((category) => [
+        category,
+        values.filter((request) => request.category === category).length,
+      ]),
+    ),
+  };
+}
+
 function summarizeJourneys(journeys) {
   const categories = Object.fromEntries(
     ["own_test", "railway_healthcheck", "probe_or_indexer", "potential_external", "unknown"].map((category) => [
@@ -269,6 +438,7 @@ function summarizeJourneys(journeys) {
     verifiedPayment: funnel.payment_verification,
     completedPurchases: funnel.success,
     feedbackJourneys: funnel.feedback,
+    allFeedbackJourneys: journeys.filter((journey) => journey.stages.includes("feedback")).length,
     funnel,
     stoppedAt,
   };
@@ -345,12 +515,16 @@ export async function analyzeFiles(filePaths, options = {}) {
       stats.analyzedLines += 1;
       if (!stats.analyzedFirstTimestamp || timestampMs < Date.parse(stats.analyzedFirstTimestamp)) stats.analyzedFirstTimestamp = timestamp;
       if (!stats.analyzedLastTimestamp || timestampMs > Date.parse(stats.analyzedLastTimestamp)) stats.analyzedLastTimestamp = timestamp;
+      const isRailwayHttpRecord = hasTopLevelKey(record, ["httpStatus", "clientUa", "edgeRegion"]);
       events.push({
         file: filePath,
         line: index + 1,
         timestamp,
         category: classifyTraffic(record),
         identity: eventIdentity(record),
+        eventName: firstValue(record, "event"),
+        isRailwayHttpRecord,
+        requestPath: firstValue(record, "path"),
         stages: detectStages(record),
       });
     }
@@ -359,7 +533,9 @@ export async function analyzeFiles(filePaths, options = {}) {
   }
 
   events.sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp) || a.file.localeCompare(b.file) || a.line - b.line);
-  const journeys = reconstructJourneys(events, options.sessionMinutes ?? 15);
+  const correlation = reconcileCorrelatedEvents(events);
+  correlation.reclassifiedAutomatedBrowserRequests = reclassifyAutomatedBrowserTraffic(events);
+  const journeys = reconstructJourneys(events, options.sessionMinutes ?? 30);
 
   return {
     generatedAt: new Date().toISOString(),
@@ -370,10 +546,15 @@ export async function analyzeFiles(filePaths, options = {}) {
       coveragePercent: 100,
       files,
     },
-    summary: summarizeJourneys(journeys),
+    summary: {
+      ...summarizeJourneys(journeys),
+      requests: summarizeRequests(events),
+      correlation,
+    },
     journeys,
     limitations: [
       "A potentially external journey is not proof of a distinct human visitor.",
+      "Server-generated journey IDs are request correlation identifiers, not stable human identities.",
       "A 402 challenge without a validated request is not counted as purchase intent.",
       "Psychological or commercial motives cannot be inferred without explicit feedback.",
       "Valid JSON records without a parseable timestamp are covered by validation counts but excluded from the time window.",
@@ -382,14 +563,14 @@ export async function analyzeFiles(filePaths, options = {}) {
 }
 
 function helpText() {
-  return `Usage: node scripts/analyze-railway-ndjson.mjs [options] <file...>\n\nOptions:\n  --since <ISO-8601>       Analyze events at or after this timestamp\n  --session-minutes <n>    Temporal grouping window (default: 15)\n  --out <path>             Write the JSON report to a file\n  --pretty                 Pretty-print JSON\n  --help                   Show this help\n`;
+  return `Usage: node scripts/analyze-railway-ndjson.mjs [options] <file...>\n\nOptions:\n  --since <ISO-8601>       Analyze events at or after this timestamp\n  --session-minutes <n>    Temporal grouping window (default: 30)\n  --out <path>             Write the JSON report to a file\n  --pretty                 Pretty-print JSON\n  --help                   Show this help\n`;
 }
 
 async function main() {
   const { values, positionals } = parseArgs({
     options: {
       since: { type: "string" },
-      "session-minutes": { type: "string", default: "15" },
+      "session-minutes": { type: "string", default: "30" },
       out: { type: "string" },
       pretty: { type: "boolean", default: false },
       help: { type: "boolean", default: false },
