@@ -175,6 +175,39 @@ The health endpoint is public and does not require payment:
 curl https://mcp-x402-production.up.railway.app/health
 ```
 
+## Railway Log Diagnostics
+
+Railway currently accepts `--since` for historical HTTP logs but rejects
+`--until`. On Windows PowerShell, export a bounded application and HTTP log
+window without using the broken flag:
+
+```powershell
+.\scripts\export-railway-window.ps1 `
+  -StartUtc "2026-08-22T16:31:22.401228537Z" `
+  -EndUtc "2026-08-23T06:21:18.045229877Z" `
+  -OutputPrefix "railway-diagnostic"
+```
+
+The script retrieves logs from the lower bound and applies the upper UTC bound
+locally using ordinal ISO-8601 comparison, which preserves Railway's nanosecond
+timestamps. It writes raw captures plus bounded `app` and `http` NDJSON files.
+
+Analyze both bounded files while reading and validating every physical line:
+
+```bash
+npm run logs:analyze -- \
+  --since "2026-08-22T16:31:22.401228537Z" \
+  --pretty \
+  --out railway-diagnostic-report.json \
+  railway-diagnostic-app.ndjson railway-diagnostic-http.ndjson
+```
+
+The report includes per-file coverage, empty/valid/invalid line counts,
+timestamp bounds, separation of `Diogo-*`, `RailwayHealthcheck`, known probes
+or indexers and potentially external traffic, journey reconstruction and funnel
+stopping points. It deliberately does not treat an isolated `402` as purchase
+intent and does not infer human identity or motivation from request metadata.
+
 
 ## Ready-to-Run x402 Buyer
 

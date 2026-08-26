@@ -13,7 +13,9 @@
     "verify": "node --env-file=.env.test ./dist/verify-buyer.js",
     "mcp:analyze": "node --env-file=.env.test ./dist/mcp-buyer.js analisar_url",
     "mcp:consult": "node --env-file=.env.test ./dist/mcp-buyer.js consultar_ia",
-    "mcp:verify": "node --env-file=.env.test ./dist/mcp-buyer.js verificar_condicoes"
+    "mcp:verify": "node --env-file=.env.test ./dist/mcp-buyer.js verificar_condicoes",
+    "logs:analyze": "node ./scripts/analyze-railway-ndjson.mjs",
+    "test:logs": "node --test ./scripts/analyze-railway-ndjson.test.mjs"
   },
   "keywords": [],
   "author": "",
