@@ -205,8 +205,11 @@ npm run logs:analyze -- \
 The report includes per-file coverage, empty/valid/invalid line counts,
 timestamp bounds, separation of `Diogo-*`, `RailwayHealthcheck`, known probes
 or indexers and potentially external traffic, journey reconstruction and funnel
-stopping points. It deliberately does not treat an isolated `402` as purchase
-intent and does not infer human identity or motivation from request metadata.
+stopping points. It joins application `railwayRequestId` values to Railway HTTP
+`requestId` values, understands HTTP `clientUa`, groups server-generated journey
+IDs by fingerprint and temporal proximity, and counts only accepted normalized
+feedback. It deliberately does not treat an isolated `402` as purchase intent
+and does not infer human identity or motivation from request metadata.
 
 
 ## Ready-to-Run x402 Buyer
