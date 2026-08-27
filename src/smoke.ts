@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-const SERVICE_VERSION = "1.2.7";
+const SERVICE_VERSION = "1.2.8";
 const SERVICE_URL = (
   process.env.SERVICE_URL ??
   "https://mcp-x402-production.up.railway.app"
