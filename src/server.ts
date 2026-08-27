@@ -79,7 +79,7 @@ const X402_NETWORK = (process.env.X402_NETWORK ?? "eip155:84532") as `${string}:
 const CONSULT_PRICE = "$0.02";
 const ANALYZE_PRICE = "$0.05";
 const VERIFY_PRICE = "$0.05";
-const SERVICE_VERSION = "1.2.7";
+const SERVICE_VERSION = "1.2.8";
 const X402_FACILITATOR_URL = "https://x402.org/facilitator";
 const DISCOVERY_PATHS = new Set([
   "/",
