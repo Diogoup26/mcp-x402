@@ -3,7 +3,7 @@
   "name": "io.github.Diogoup26/mcp-x402",
   "title": "MCP x402 - Evidence-Backed Web Verification",
   "description": "Evidence-backed x402 web verification for AI agents, with auditable decisions for every condition.",
-  "version": "1.2.7",
+  "version": "1.2.8",
   "repository": {
     "url": "https://github.com/Diogoup26/mcp-x402",
     "source": "github"
@@ -12,6 +12,15 @@
     {
       "type": "streamable-http",
       "url": "https://mcp-x402-production.up.railway.app/mcp"
+    }
+  ],
+  "icons": [
+    {
+      "src": "https://raw.githubusercontent.com/Diogoup26/mcp-x402/main/assets/mcp-x402-logo.png",
+      "mimeType": "image/png",
+      "sizes": [
+        "512x512"
+      ]
     }
   ]
 }
