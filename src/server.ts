@@ -2205,6 +2205,13 @@ app.get("/health", (_req, res) => {
   });
 });
 
+app.get("/favicon.ico", (_req, res) => {
+  res.redirect(
+    302,
+    "https://raw.githubusercontent.com/Diogoup26/mcp-x402/main/assets/mcp-x402-logo.png",
+  );
+});
+
 app.get("/", (_req, res) => {
   res.json({
     name: "MCP x402 - Evidence-Backed Web Verification",
