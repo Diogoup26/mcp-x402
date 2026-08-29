@@ -301,8 +301,11 @@ agent no longer has to infer what to do after the first unpaid request:
 
 REST metadata recommends `@x402/fetch`; MCP metadata recommends `@x402/mcp`.
 Paid responses also link back to the discovery instructions through
-`x-payment-instructions`. The flow never requests a private key, Railway or
-GitHub credentials, or an OpenAI key.
+`x-payment-instructions`. They additionally publish an RFC 8288 `Link` header
+with the registered `payment` and `help` relations, so generic HTTP agents can
+discover the same machine-readable continuation and optional feedback path
+without depending on project-specific headers. The flow never requests a
+private key, Railway or GitHub credentials, or an OpenAI key.
 
 ## Optional Conversion Feedback
 
@@ -356,7 +359,7 @@ npm run smoke
 ```
 
 Use `SERVICE_URL` to target another deployment. The test uses one persistent
-`x-journey-id`, sends `User-Agent: Diogo-Smoke/1.2.8`, verifies that the MCP
+`x-journey-id`, sends `User-Agent: Diogo-Smoke/1.2.9`, verifies that the MCP
 x402 challenge advertises the public HTTPS endpoint with `type=mcp` and the
 correct `toolName`, and never creates or
 signs a payment.

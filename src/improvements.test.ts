@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   getHttpPaymentContinuation,
   getMcpPaymentContinuation,
+  getPaymentDiscoveryLink,
   PUBLIC_HTTP_URL_PATTERN,
 } from "./client-guidance.js";
 import {
@@ -105,6 +106,13 @@ test("publishes a complete and reversible x402 continuation path", () => {
   assert.equal(mcp.steps.at(-1)?.expectedPaymentResponseSuccess, true);
   assert.equal(new RegExp(PUBLIC_HTTP_URL_PATTERN).test("https://example.com"), true);
   assert.equal(new RegExp(PUBLIC_HTTP_URL_PATTERN).test("ftp://example.com"), false);
+});
+
+test("publishes standards-based payment and help discovery", () => {
+  assert.equal(
+    getPaymentDiscoveryLink("https://service.example/"),
+    '<https://service.example/.well-known/x402>; rel="payment help"; type="application/json"',
+  );
 });
 
 test("publishes tool metadata with selection guidance and result boundaries", () => {

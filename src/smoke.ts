@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-const SERVICE_VERSION = "1.2.8";
+const SERVICE_VERSION = "1.2.9";
 const SERVICE_URL = (
   process.env.SERVICE_URL ??
   "https://mcp-x402-production.up.railway.app"
@@ -213,6 +213,11 @@ async function main(): Promise<void> {
       analyzeChallenge.headers.get("x-payment-instructions") ===
         `${SERVICE_URL}/.well-known/x402`,
     "Analyze 402 sem ligação às instruções de continuação",
+  );
+  assert(
+    analyzeChallenge.headers.get("link") ===
+      `<${SERVICE_URL}/.well-known/x402>; rel="payment help"; type="application/json"`,
+    "Analyze 402 sem Web Link normalizado para pagamento e ajuda",
   );
   assert(
     analyzeChallenge.headers.get("x-feedback-endpoint") ===

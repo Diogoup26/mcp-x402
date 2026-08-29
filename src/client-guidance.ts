@@ -1,5 +1,10 @@
 export const PUBLIC_HTTP_URL_PATTERN = "^https?://[^\\s]+$";
 
+export function getPaymentDiscoveryLink(serviceUrl: string): string {
+  const origin = serviceUrl.replace(/\/+$/, "");
+  return `<${origin}/.well-known/x402>; rel="payment help"; type="application/json"`;
+}
+
 export function getHttpPaymentContinuation(
   targetUrl: string,
   preflightUrl: string,
