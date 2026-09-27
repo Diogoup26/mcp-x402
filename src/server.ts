@@ -2318,6 +2318,8 @@ app.get("/openapi.json", (_req, res) => {
       version: SERVICE_VERSION,
       description:
         "EN: x402 service for AI analysis of public web pages and auditable condition verification. Payment instructions are returned through the payment-required header. PT: Serviço x402 para análise com IA de páginas web públicas e verificação auditável de condições. As instruções de pagamento são devolvidas no cabeçalho payment-required.",
+      "x-guidance":
+        "Use POST /analyze to summarize a public HTTP(S) page, or POST /verify-conditions to check 1 to 10 conditions against a public page. The JSON input schemas below describe each request. Use the free preflight route to validate input. An unsigned paid POST returns an x402 payment-required challenge; after authorizing 0.05 USDC on Base, repeat the same POST with its payment-signature. Feedback is optional and free at POST /feedback.",
         "x-supported-languages": ["en", "pt-PT"],
     },
     servers: [{ url: PUBLIC_SERVICE_URL }],
@@ -2326,6 +2328,10 @@ app.get("/openapi.json", (_req, res) => {
         post: {
           summary: "Analisa uma página web pública",
           tags: ["URL analysis", "x402"],
+          "x-payment-info": {
+            price: { mode: "fixed", currency: "USD", amount: "0.05" },
+            protocols: [{ x402: {} }],
+          },
           requestBody: {
             required: true,
             content: {
@@ -2352,6 +2358,19 @@ app.get("/openapi.json", (_req, res) => {
             "200": {
               description: "Análise concluída.",
               headers: getFeedbackOpenApiHeaders(),
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    required: ["source", "title", "report"],
+                    properties: {
+                      source: { type: "string", format: "uri" },
+                      title: { type: "string" },
+                      report: { type: "string" },
+                    },
+                  },
+                },
+              },
             },
             "400": { description: "Pedido inválido." },
             "402": {
@@ -2376,6 +2395,10 @@ app.get("/openapi.json", (_req, res) => {
           description:
             "Devolve um recibo auditável com decisão por condição, prova textual, data/hora, ID único e hash SHA-256 do conteúdo.",
           tags: ["Decision verification", "x402"],
+          "x-payment-info": {
+            price: { mode: "fixed", currency: "USD", amount: "0.05" },
+            protocols: [{ x402: {} }],
+          },
           requestBody: {
             required: true,
             content: {
@@ -2412,6 +2435,42 @@ app.get("/openapi.json", (_req, res) => {
               description:
                 "Recibo auditável: decisão por condição, prova textual quando disponível, verificationId e pageHash SHA-256.",
               headers: getFeedbackOpenApiHeaders(),
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    required: ["source", "title", "verifiedAt", "decisao", "verificationId", "pageHash"],
+                    properties: {
+                      source: { type: "string", format: "uri" },
+                      title: { type: "string" },
+                      verifiedAt: { type: "string", format: "date-time" },
+                      verificationId: { type: "string", format: "uuid" },
+                      pageHash: { type: "string", pattern: "^sha256:[a-f0-9]{64}$" },
+                      decisao: {
+                        type: "object",
+                        required: ["decisao", "condicoes", "resumo"],
+                        properties: {
+                          decisao: { type: "string", enum: ["confirmado", "rejeitado", "incerto"] },
+                          resumo: { type: "string" },
+                          condicoes: {
+                            type: "array",
+                            items: {
+                              type: "object",
+                              required: ["condicao", "estado", "prova", "explicacao"],
+                              properties: {
+                                condicao: { type: "string" },
+                                estado: { type: "string", enum: ["confirmada", "rejeitada", "incerta"] },
+                                prova: { type: ["string", "null"] },
+                                explicacao: { type: "string" },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
             },
             "400": { description: "Pedido inválido." },
             "402": {
@@ -3153,6 +3212,12 @@ app.all("/mcp", (req, res) => {
 app.post(
   "/analyze",
   (req, res, next) => {
+    // Unsigned discovery probes must see the x402 challenge. Requests carrying
+    // a payment stay subject to input validation before any settlement.
+    if (!getHeaderSummary(req).present) {
+      next();
+      return;
+    }
     const parsed = analyzeUrlInput.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
@@ -3208,6 +3273,10 @@ app.post(
 app.post(
   "/verify-conditions",
   (req, res, next) => {
+    if (!getHeaderSummary(req).present) {
+      next();
+      return;
+    }
     const parsed = verifyConditionsInput.safeParse(req.body);
 
     if (!parsed.success) {
