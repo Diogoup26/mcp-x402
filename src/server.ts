@@ -2504,6 +2504,7 @@ app.get("/openapi.json", (_req, res) => {
                     },
                   },
                 },
+                example: BAZAAR_TOOL_EXAMPLES.verificar_condicoes.input,
               },
             },
           },
@@ -2546,6 +2547,7 @@ app.get("/openapi.json", (_req, res) => {
                       },
                     },
                   },
+                  example: BAZAAR_TOOL_EXAMPLES.verificar_condicoes.output,
                 },
               },
             },
@@ -2642,11 +2644,7 @@ app.get("/openapi.json", (_req, res) => {
                     },
                   },
                 },
-                example: {
-                  url: "https://example.com",
-                  condicoes: ["A página identifica o vendedor."],
-                  contexto: "Avaliação antes de uma compra.",
-                },
+                example: BAZAAR_TOOL_EXAMPLES.verificar_condicoes.input,
               },
             },
           },
@@ -2879,12 +2877,18 @@ Fluxo REST completo: faz primeiro o preflight gratuito; envia o pedido sem assin
 Fluxo MCP completo: faz POST /preflight/mcp; liga a ${PUBLIC_MCP_SERVER_URL}; chama a mesma ferramenta com os argumentos validados; valida os requisitos x402 devolvidos; autoriza o pagamento; repete tools/call com os mesmos argumentos e x402/payment em _meta; confirma o recibo de liquidação.
 Clientes automáticos recomendados: @x402/fetch para REST e @x402/mcp para MCP. Nunca envies chaves privadas, credenciais Railway/GitHub ou chaves OpenAI ao serviço.
 
-## Pedido de exemplo
+## Demonstração estática gratuita — nenhuma chamada ou pagamento é efetuado
 
-POST ${PUBLIC_SERVICE_URL}/analyze
+Este exemplo mostra exatamente a estrutura recebida por 0,05 USDC. A oferta, o vendedor, o timestamp, o ID e o hash são fictícios e servem apenas para demonstrar o contrato do resultado.
+
+POST ${PUBLIC_SERVICE_URL}/verify-conditions
 Content-Type: application/json
 
-{"url":"https://example.com","objetivo":"Resumir factos, riscos e ações recomendadas."}
+${JSON.stringify(BAZAAR_TOOL_EXAMPLES.verificar_condicoes.input, null, 2)}
+
+Resultado de exemplo:
+
+${JSON.stringify(BAZAAR_TOOL_EXAMPLES.verificar_condicoes.output, null, 2)}
 `
   );
 });

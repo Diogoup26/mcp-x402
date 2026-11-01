@@ -71,37 +71,45 @@ export const BAZAAR_TOOL_EXAMPLES = {
   },
   verificar_condicoes: {
     input: {
-      url: "https://example.com",
+      url: "https://shop.example/offers/refurbished-laptop",
       condicoes: [
-        "The page identifies a real commercial seller.",
-        "The page is intended for documentation examples.",
+        "The offer includes a 12-month warranty.",
+        "The return period is at least 30 days.",
+        "The seller is an authorized manufacturer reseller.",
       ],
       contexto: "Pre-purchase seller verification.",
     },
     output: {
-      source: "https://example.com/",
-      title: "Example Domain",
+      source: "https://shop.example/offers/refurbished-laptop",
+      title: "Refurbished Laptop Offer — Example Seller",
       verifiedAt: "2026-01-01T00:00:00.000Z",
       decisao: {
         decisao: "incerto",
         condicoes: [
           {
-            condicao: "The page identifies a real commercial seller.",
+            condicao: "The offer includes a 12-month warranty.",
+            estado: "confirmada",
+            prova: "Includes a 12-month limited warranty.",
+            explicacao:
+              "The offer explicitly states the warranty duration.",
+          },
+          {
+            condicao: "The return period is at least 30 days.",
+            estado: "rejeitada",
+            prova: "Returns accepted within 14 days of delivery.",
+            explicacao:
+              "The stated 14-day return period contradicts the required minimum of 30 days.",
+          },
+          {
+            condicao: "The seller is an authorized manufacturer reseller.",
             estado: "incerta",
             prova: null,
             explicacao:
-              "The page does not identify a commercial seller.",
-          },
-          {
-            condicao: "The page is intended for documentation examples.",
-            estado: "confirmada",
-            prova: "for use in illustrative examples in documents",
-            explicacao:
-              "The page explicitly states that it is intended for examples.",
+              "The page provides no evidence of manufacturer authorization.",
           },
         ],
         resumo:
-          "The documentation purpose is supported, while seller identity is not established.",
+          "The warranty is confirmed, the return-period requirement is rejected, and reseller authorization remains uncertain.",
       },
       verificationId: "00000000-0000-4000-8000-000000000000",
       pageHash:
