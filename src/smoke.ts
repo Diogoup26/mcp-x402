@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-const SERVICE_VERSION = "1.2.10";
+const SERVICE_VERSION = "1.2.11";
 const SERVICE_URL = (
   process.env.SERVICE_URL ??
   "https://mcp-x402-production.up.railway.app"
@@ -208,6 +208,40 @@ async function main(): Promise<void> {
       llmsText.includes('"verificationId"') &&
       llmsText.includes('"pageHash"'),
     "llms.txt não publica a demonstração completa de verificar_condicoes",
+  );
+
+  const httpPreview = await expectStatus(
+    "HTTP free verification preview",
+    "/preview/verify-conditions",
+    200,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ useCase: "offer_terms" }),
+    },
+  );
+  const httpPreviewBody = await httpPreview.json() as {
+    kind?: unknown;
+    useCase?: unknown;
+    paymentRequired?: unknown;
+    openAiUsed?: unknown;
+    liveRequestPerformed?: unknown;
+    exampleOutput?: { verificationId?: unknown; pageHash?: unknown };
+    preflightEndpoint?: unknown;
+    paidEndpoint?: unknown;
+  };
+  assert(
+    httpPreviewBody.kind === "static_example" &&
+      httpPreviewBody.useCase === "offer_terms" &&
+      httpPreviewBody.paymentRequired === false &&
+      httpPreviewBody.openAiUsed === false &&
+      httpPreviewBody.liveRequestPerformed === false &&
+      typeof httpPreviewBody.exampleOutput?.verificationId === "string" &&
+      typeof httpPreviewBody.exampleOutput.pageHash === "string" &&
+      httpPreviewBody.preflightEndpoint ===
+        `${SERVICE_URL}/preflight/verify-conditions` &&
+      httpPreviewBody.paidEndpoint === `${SERVICE_URL}/verify-conditions`,
+    "Preview HTTP gratuito não devolveu o contrato esperado",
   );
 
   const analyzeBody = {

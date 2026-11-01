@@ -84,8 +84,18 @@ const X402_NETWORK = (process.env.X402_NETWORK ?? "eip155:84532") as `${string}:
 const CONSULT_PRICE = "$0.02";
 const ANALYZE_PRICE = "$0.05";
 const VERIFY_PRICE = "$0.05";
-const SERVICE_VERSION = "1.2.10";
-const SERVICE_NAME = "MCP x402 - Evidence-Backed Web Verification";
+const SERVICE_VERSION = "1.2.11";
+const SERVICE_NAME = "MCP x402 Verification";
+const SERVICE_ICON_URL =
+  "https://raw.githubusercontent.com/Diogoup26/mcp-x402/main/assets/mcp-x402-logo.png";
+const VERIFICATION_DISCOVERY_TAGS = [
+  "offer-verification",
+  "warranty-check",
+  "seller-check",
+  "policy-check",
+  "web-evidence",
+] as const;
+const VERIFICATION_PREVIEW_PATH = "/preview/verify-conditions";
 const X402_FACILITATOR_URL = "https://x402.org/facilitator";
 const DISCOVERY_PATHS = new Set([
   "/",
@@ -102,6 +112,30 @@ const PREFLIGHT_PATHS = new Set([
   "/preflight/verify-conditions",
   "/preflight/mcp",
 ]);
+
+function getVerificationPreview(
+  useCase: (typeof VERIFICATION_USE_CASES)[number] = "offer_terms",
+) {
+  const preview = VERIFICATION_PREVIEW_CASES[useCase];
+
+  return {
+    kind: "static_example" as const,
+    useCase,
+    label: preview.label,
+    liveRequestPerformed: false as const,
+    openAiUsed: false as const,
+    paymentRequired: false as const,
+    paidTool: "verificar_condicoes" as const,
+    paidEndpoint: `${PUBLIC_SERVICE_URL}/verify-conditions`,
+    preflightEndpoint: `${PUBLIC_SERVICE_URL}/preflight/verify-conditions`,
+    price: VERIFY_PRICE,
+    network: X402_NETWORK,
+    exampleInput: structuredClone(preview.input),
+    exampleOutput: structuredClone(preview.output),
+    nextStep:
+      "Send a real public URL and 1 to 10 explicit conditions to the free preflight endpoint. When ready is true, send the identical body to the paid endpoint and complete the x402 challenge.",
+  };
+}
 
 const OBSERVABILITY_SALT =
   process.env.OBSERVABILITY_SALT?.trim() || randomUUID();
@@ -644,6 +678,8 @@ const previewVerificationOutputSchema = z.object({
   openAiUsed: z.literal(false),
   paymentRequired: z.literal(false),
   paidTool: z.literal("verificar_condicoes"),
+  paidEndpoint: z.string().url(),
+  preflightEndpoint: z.string().url(),
   price: z.string(),
   network: z.string(),
   exampleInput: verifyConditionsInput,
@@ -1113,17 +1149,8 @@ const paidVerifyConditionsTool = createPaymentWrapper(paymentServer, {
     description:
       "Evidence-backed pre-purchase decisions for offer and warranty terms, seller identity or authorization, and policy compliance.",
     serviceName: SERVICE_NAME,
-    tags: [
-      "seller-verification",
-      "seller-trust",
-      "pre-purchase",
-      "policy-check",
-      "policy-compliance",
-      "warranty-check",
-      "evidence",
-      "due-diligence",
-      "agent-safety",
-    ],
+    tags: [...VERIFICATION_DISCOVERY_TAGS],
+    iconUrl: SERVICE_ICON_URL,
   },
   extensions: declareDiscoveryExtension({
     toolName: "verificar_condicoes",
@@ -1304,7 +1331,6 @@ const handler = createMcpHandler(() => {
     },
     async ({ useCase }) => {
       const selectedUseCase = useCase ?? "offer_terms";
-      const preview = VERIFICATION_PREVIEW_CASES[selectedUseCase];
       const trace = mcpRequestContext.getStore();
       const startedAt = Date.now();
 
@@ -1315,21 +1341,7 @@ const handler = createMcpHandler(() => {
         trace.state.executionSucceeded = true;
       }
 
-      const output = {
-        kind: "static_example" as const,
-        useCase: selectedUseCase,
-        label: preview.label,
-        liveRequestPerformed: false as const,
-        openAiUsed: false as const,
-        paymentRequired: false as const,
-        paidTool: "verificar_condicoes" as const,
-        price: VERIFY_PRICE,
-        network: X402_NETWORK,
-        exampleInput: structuredClone(preview.input),
-        exampleOutput: structuredClone(preview.output),
-        nextStep:
-          "Call verificar_condicoes with a real public URL and explicit conditions. The paid tool will return a fresh verification, timestamp, verificationId and pageHash.",
-      };
+      const output = getVerificationPreview(selectedUseCase);
 
       logMcpLifecycle("mcp_preview_requested", {
         toolName: "preview_verification",
@@ -1973,6 +1985,7 @@ app.use((req, res, next) => {
     const isPaidEndpoint =
       req.path === "/analyze" || req.path === "/verify-conditions";
     const isPreflightEndpoint = PREFLIGHT_PATHS.has(req.path);
+    const isPreviewEndpoint = req.path === VERIFICATION_PREVIEW_PATH;
     const diagnosticTargetPath = getDiagnosticTargetPath(req.path);
     const paymentHeader = getHeaderSummary(req);
     const requestIntent = diagnosticTargetPath
@@ -2017,6 +2030,8 @@ app.use((req, res, next) => {
       "not_a_paid_tool_call";
     const funnelStage =
       isDiscovery ? "discovery" :
+      isPreviewEndpoint && res.statusCode < 400 ? "preview" :
+      isPreviewEndpoint ? "preview_invalid" :
       isPreflightEndpoint && res.statusCode < 400 ? "preflight_ready" :
       isPreflightEndpoint ? "preflight_invalid" :
       isMcpEndpoint && mcpPrePaymentRejectionCategory !== null ? "mcp_pre_payment_rejection" :
@@ -2139,6 +2154,9 @@ app.use((req, res, next) => {
         ? getValidationIssues(diagnosticTargetPath, req.body)
         : null,
       requestIntent,
+      previewUseCase: isPreviewEndpoint
+        ? (res.locals.previewUseCase ?? null)
+        : null,
       requestIntentDetail: diagnosticTargetPath
         ? getPaidRequestDetail(diagnosticTargetPath, req.body)
         : null,
@@ -2276,17 +2294,8 @@ const requireVerifyConditionsPayment = paymentMiddleware(
             "Evidence-backed pre-purchase verification for offer and warranty terms, seller identity or authorization, and policy compliance. Send a valid JSON body with url and 1 to 10 conditions. Returns a decision per condition, textual evidence when available, verificationId and SHA-256 page hash.",
       mimeType: "application/json",
       serviceName: SERVICE_NAME,
-      tags: [
-        "seller-verification",
-        "seller-trust",
-        "pre-purchase",
-        "policy-check",
-        "policy-compliance",
-        "warranty-check",
-        "evidence",
-        "due-diligence",
-        "agent-safety",
-      ],
+      tags: [...VERIFICATION_DISCOVERY_TAGS],
+      iconUrl: SERVICE_ICON_URL,
       extensions: {
         ...declareDiscoveryExtension({
           bodyType: "json",
@@ -2322,25 +2331,8 @@ const requireVerifyConditionsPayment = paymentMiddleware(
             additionalProperties: false,
           },
           output: {
-            example: {
-              source: "https://example.com/",
-              title: "Example Domain",
-              verifiedAt: "2026-08-15T00:00:00.000Z",
-              decisao: {
-                decisao: "confirmado",
-                condicoes: [
-                  {
-                    condicao: "The page identifies the seller.",
-                    estado: "confirmada",
-                    prova: "Example Domain",
-                    explicacao:
-                      "The page explicitly identifies the seller.",
-                  },
-                ],
-                resumo:
-                  "Condition confirmed based on extracted page content.",
-              },
-            },
+            example: BAZAAR_TOOL_EXAMPLES.verificar_condicoes.output,
+            schema: BAZAAR_OUTPUT_SCHEMAS.verificar_condicoes,
           },
         }),
       },
@@ -2372,6 +2364,25 @@ app.get("/health", (_req, res) => {
   });
 });
 
+app.post(VERIFICATION_PREVIEW_PATH, (req, res) => {
+  const parsed = previewVerificationInput.safeParse(req.body);
+
+  if (!parsed.success) {
+    res.status(400).json({
+      ready: false,
+      reason: "invalid_input",
+      message:
+        "Send an optional useCase equal to offer_terms, seller_trust or policy_compliance.",
+      details: z.treeifyError(parsed.error),
+    });
+    return;
+  }
+
+  const useCase = parsed.data.useCase ?? "offer_terms";
+  res.locals.previewUseCase = useCase;
+  res.json(getVerificationPreview(useCase));
+});
+
 app.get("/favicon.ico", (_req, res) => {
   res.redirect(
     302,
@@ -2393,6 +2404,7 @@ app.get("/", (_req, res) => {
     },
     endpoints: {
       mcp: `${PUBLIC_SERVICE_URL}/mcp`,
+      previewVerifyConditions: `POST ${PUBLIC_SERVICE_URL}${VERIFICATION_PREVIEW_PATH}`,
       analyze: `POST ${PUBLIC_SERVICE_URL}/analyze`,
       verifyConditions: `POST ${PUBLIC_SERVICE_URL}/verify-conditions`,
       preflightAnalyze: `POST ${PUBLIC_SERVICE_URL}/preflight/analyze`,
@@ -2489,6 +2501,45 @@ app.get("/openapi.json", (_req, res) => {
     },
     servers: [{ url: PUBLIC_SERVICE_URL }],
     paths: {
+      [VERIFICATION_PREVIEW_PATH]: {
+        post: {
+          summary: "Pré-visualiza gratuitamente o resultado de uma verificação",
+          description:
+            "Devolve uma fixture estática e estruturada. Não consulta a web, não usa OpenAI e não requer pagamento.",
+          tags: ["Preview", "Decision verification"],
+          requestBody: {
+            required: false,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    useCase: {
+                      type: "string",
+                      enum: [...VERIFICATION_USE_CASES],
+                      default: "offer_terms",
+                    },
+                  },
+                  additionalProperties: false,
+                },
+                example: { useCase: "offer_terms" },
+              },
+            },
+          },
+          responses: {
+            "200": {
+              description: "Exemplo estático do contrato de verificação.",
+              content: {
+                "application/json": {
+                  schema: z.toJSONSchema(previewVerificationOutputSchema),
+                  example: getVerificationPreview("offer_terms"),
+                },
+              },
+            },
+            "400": { description: "useCase inválido." },
+          },
+        },
+      },
       "/analyze": {
         post: {
           summary: "Analisa uma página web pública",
@@ -2901,6 +2952,7 @@ app.get("/agents.json", (_req, res) => {
 },
     endpoints: {
       mcp: `${PUBLIC_SERVICE_URL}/mcp`,
+      previewVerifyConditions: `${PUBLIC_SERVICE_URL}${VERIFICATION_PREVIEW_PATH}`,
       verifyConditions: `${PUBLIC_SERVICE_URL}/verify-conditions`,
       analyze: `${PUBLIC_SERVICE_URL}/analyze`,
       preflightAnalyze: `${PUBLIC_SERVICE_URL}/preflight/analyze`,
@@ -2951,6 +3003,7 @@ app.get("/llms.txt", (_req, res) => {
 
 - MCP: ${PUBLIC_SERVICE_URL}/mcp
 - Preview MCP gratuito: ferramenta preview_verification — exemplos estruturados para offer_terms, seller_trust e policy_compliance; não consulta a web, não usa OpenAI e não cobra
+- Preview HTTP gratuito: POST ${PUBLIC_SERVICE_URL}${VERIFICATION_PREVIEW_PATH} — devolve os mesmos exemplos estáticos sem consultar a web, usar OpenAI ou cobrar
 - Análise paga: POST ${PUBLIC_SERVICE_URL}/analyze
 - Verificação paga: POST ${PUBLIC_SERVICE_URL}/verify-conditions — decisão por condição, provas, verificationId e pageHash SHA-256
 - Pré-validação gratuita da análise: POST ${PUBLIC_SERVICE_URL}/preflight/analyze — valida o JSON, informa preço e explica o próximo passo sem cobrar
