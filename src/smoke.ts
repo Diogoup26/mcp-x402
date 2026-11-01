@@ -446,8 +446,9 @@ async function main(): Promise<void> {
         bazaar?: {
           info?: {
             input?: { type?: unknown; toolName?: unknown };
-            output?: { example?: unknown; schema?: unknown };
+            output?: { example?: unknown };
           };
+          schema?: { properties?: { output?: unknown } };
         };
       };
     };
@@ -475,9 +476,12 @@ async function main(): Promise<void> {
   );
   const bazaarOutput =
     toolChallengeResult.structuredContent?.extensions?.bazaar?.info?.output;
+  const bazaarOutputSchema =
+    toolChallengeResult.structuredContent?.extensions?.bazaar?.schema?.properties
+      ?.output;
   assert(
     bazaarOutput?.example !== undefined &&
-      bazaarOutput.schema !== undefined,
+      bazaarOutputSchema !== undefined,
     "Extensão Bazaar MCP sem exemplo e schema de output",
   );
   assert(
