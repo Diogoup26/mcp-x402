@@ -177,6 +177,11 @@ test("publishes machine-readable Bazaar input and output examples", () => {
     assert.equal(schema.type, "object");
     assert.equal(schema.additionalProperties, false);
     assert.ok(schema.required.length > 0);
+    assert.doesNotMatch(
+      JSON.stringify(schema),
+      /"format":/,
+      "Bazaar schemas must avoid AJV formats that are not registered by x402",
+    );
   }
 
   assert.deepEqual(
