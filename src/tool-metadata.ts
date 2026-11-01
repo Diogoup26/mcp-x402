@@ -296,7 +296,7 @@ export const BAZAAR_OUTPUT_SCHEMAS = {
   analisar_url: {
     type: "object",
     properties: {
-      source: { type: "string", format: "uri" },
+      source: { type: "string", pattern: "^https?://[^\\s]+$" },
       title: { type: "string" },
       report: {
         type: "string",
@@ -310,9 +310,12 @@ export const BAZAAR_OUTPUT_SCHEMAS = {
   verificar_condicoes: {
     type: "object",
     properties: {
-      source: { type: "string", format: "uri" },
+      source: { type: "string", pattern: "^https?://[^\\s]+$" },
       title: { type: "string" },
-      verifiedAt: { type: "string", format: "date-time" },
+      verifiedAt: {
+        type: "string",
+        pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$",
+      },
       decisao: {
         type: "object",
         properties: {
@@ -329,7 +332,11 @@ export const BAZAAR_OUTPUT_SCHEMAS = {
         required: ["decisao", "condicoes", "resumo"],
         additionalProperties: false,
       },
-      verificationId: { type: "string", format: "uuid" },
+      verificationId: {
+        type: "string",
+        pattern:
+          "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+      },
       pageHash: {
         type: "string",
         pattern: "^sha256:[a-f0-9]{64}$",

@@ -84,7 +84,7 @@ const X402_NETWORK = (process.env.X402_NETWORK ?? "eip155:84532") as `${string}:
 const CONSULT_PRICE = "$0.02";
 const ANALYZE_PRICE = "$0.05";
 const VERIFY_PRICE = "$0.05";
-const SERVICE_VERSION = "1.2.11";
+const SERVICE_VERSION = "1.2.12";
 const SERVICE_NAME = "MCP x402 Verification";
 const SERVICE_ICON_URL =
   "https://raw.githubusercontent.com/Diogoup26/mcp-x402/main/assets/mcp-x402-logo.png";
