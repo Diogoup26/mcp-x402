@@ -135,6 +135,28 @@ async function main(): Promise<void> {
   const openApi = await expectStatus("OpenAPI feedback contract", "/openapi.json", 200);
   const openApiBody = await openApi.json() as {
     paths?: {
+      "/verify-conditions"?: {
+        post?: {
+          requestBody?: {
+            content?: {
+              "application/json"?: { example?: { condicoes?: unknown[] } };
+            };
+          };
+          responses?: {
+            "200"?: {
+              content?: {
+                "application/json"?: {
+                  example?: {
+                    verificationId?: unknown;
+                    pageHash?: unknown;
+                    decisao?: { condicoes?: Array<{ estado?: unknown }> };
+                  };
+                };
+              };
+            };
+          };
+        };
+      };
       "/feedback"?: {
         post?: {
           requestBody?: {
@@ -161,6 +183,31 @@ async function main(): Promise<void> {
       feedbackSchema.required.includes("reason") &&
       Array.isArray(feedbackSchema.properties?.intent?.enum),
     "OpenAPI não documenta completamente /feedback",
+  );
+  const verifyOpenApi = openApiBody.paths?.["/verify-conditions"]?.post;
+  const verifyRequestExample =
+    verifyOpenApi?.requestBody?.content?.["application/json"]?.example;
+  const verifyResultExample =
+    verifyOpenApi?.responses?.["200"]?.content?.["application/json"]?.example;
+  assert(
+    verifyRequestExample?.condicoes?.length === 3 &&
+      verifyResultExample?.verificationId !== undefined &&
+      verifyResultExample.pageHash !== undefined &&
+      verifyResultExample.decisao?.condicoes?.map(({ estado }) => estado).join(",") ===
+        "confirmada,rejeitada,incerta",
+    "OpenAPI não publica a demonstração completa de verificar_condicoes",
+  );
+
+  const llms = await expectStatus("llms static result demonstration", "/llms.txt", 200);
+  const llmsText = await llms.text();
+  assert(
+    llmsText.includes("Demonstração estática gratuita") &&
+      llmsText.includes('"estado": "confirmada"') &&
+      llmsText.includes('"estado": "rejeitada"') &&
+      llmsText.includes('"estado": "incerta"') &&
+      llmsText.includes('"verificationId"') &&
+      llmsText.includes('"pageHash"'),
+    "llms.txt não publica a demonstração completa de verificar_condicoes",
   );
 
   const analyzeBody = {

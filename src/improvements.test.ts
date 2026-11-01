@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   getHttpPaymentContinuation,
@@ -137,12 +138,13 @@ test("publishes tool metadata with selection guidance and result boundaries", ()
 test("publishes machine-readable Bazaar input and output examples", () => {
   assert.equal(
     BAZAAR_TOOL_EXAMPLES.verificar_condicoes.input.condicoes.length,
-    2,
+    3,
   );
-  assert.equal(
-    BAZAAR_TOOL_EXAMPLES.verificar_condicoes.output.decisao.condicoes[0]
-      ?.estado,
-    "incerta",
+  assert.deepEqual(
+    BAZAAR_TOOL_EXAMPLES.verificar_condicoes.output.decisao.condicoes.map(
+      ({ estado }) => estado,
+    ),
+    ["confirmada", "rejeitada", "incerta"],
   );
 
   for (const schema of Object.values(BAZAAR_OUTPUT_SCHEMAS)) {
@@ -160,4 +162,18 @@ test("publishes machine-readable Bazaar input and output examples", () => {
     BAZAAR_OUTPUT_SCHEMAS.verificar_condicoes.properties.pageHash.pattern,
     "^sha256:[a-f0-9]{64}$",
   );
+});
+
+test("publishes the free static verification demonstration in the README", () => {
+  const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+
+  assert.match(readme, /Free static result demonstration/);
+  assert.match(readme, /performs no request, OpenAI call, or[\s\S]*payment/);
+  assert.match(readme, /https:\/\/shop\.example\/offers\/refurbished-laptop/);
+  assert.match(readme, /"estado": "confirmada"/);
+  assert.match(readme, /"estado": "rejeitada"/);
+  assert.match(readme, /"estado": "incerta"/);
+  assert.match(readme, /"verificationId"/);
+  assert.match(readme, /"pageHash"/);
+  assert.match(readme, /0\.05[\s\S]*USDC/);
 });

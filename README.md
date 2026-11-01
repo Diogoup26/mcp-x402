@@ -33,6 +33,67 @@ Each verification includes the final source URL, page title, timestamp, conditio
 - Ready-to-run buyer included in this repository.
 - Bazaar discovery metadata enabled on the paid HTTP and MCP surfaces.
 
+### Free static result demonstration
+
+The following example is fictitious and performs no request, OpenAI call, or
+payment. It shows the complete result contract an agent receives for `0.05
+USDC` when using `verificar_condicoes`.
+
+Example input:
+
+```json
+{
+  "url": "https://shop.example/offers/refurbished-laptop",
+  "condicoes": [
+    "The offer includes a 12-month warranty.",
+    "The return period is at least 30 days.",
+    "The seller is an authorized manufacturer reseller."
+  ],
+  "contexto": "Pre-purchase seller verification."
+}
+```
+
+Example result:
+
+```json
+{
+  "source": "https://shop.example/offers/refurbished-laptop",
+  "title": "Refurbished Laptop Offer — Example Seller",
+  "verifiedAt": "2026-01-01T00:00:00.000Z",
+  "decisao": {
+    "decisao": "incerto",
+    "condicoes": [
+      {
+        "condicao": "The offer includes a 12-month warranty.",
+        "estado": "confirmada",
+        "prova": "Includes a 12-month limited warranty.",
+        "explicacao": "The offer explicitly states the warranty duration."
+      },
+      {
+        "condicao": "The return period is at least 30 days.",
+        "estado": "rejeitada",
+        "prova": "Returns accepted within 14 days of delivery.",
+        "explicacao": "The stated 14-day return period contradicts the required minimum of 30 days."
+      },
+      {
+        "condicao": "The seller is an authorized manufacturer reseller.",
+        "estado": "incerta",
+        "prova": null,
+        "explicacao": "The page provides no evidence of manufacturer authorization."
+      }
+    ],
+    "resumo": "The warranty is confirmed, the return-period requirement is rejected, and reseller authorization remains uncertain."
+  },
+  "verificationId": "00000000-0000-4000-8000-000000000000",
+  "pageHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+}
+```
+
+This demonstrates the distinction between supporting evidence, contradictory
+evidence, and absence of evidence. The real paid result uses the fetched page,
+current timestamp, a unique `verificationId`, and the SHA-256 hash of the page
+content.
+
 ### Live endpoints
 
 - MCP: `https://mcp-x402-production.up.railway.app/mcp`
