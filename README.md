@@ -19,10 +19,22 @@ Each verification includes the final source URL, page title, timestamp, conditio
 ### Designed for
 
 - AI purchasing and procurement agents;
-- seller, product and offer verification;
-- pre-purchase due diligence;
-- policy and terms checking;
+- offer, warranty, returns and availability checks;
+- seller identity and authorization checks;
+- policy and terms compliance checks;
 - commercial automation that requires evidence before taking action.
+
+### Three buyer decisions
+
+| Buyer need | Select this tool when the agent must decide |
+| --- | --- |
+| Offer terms | Whether an offer satisfies warranty, returns, price or delivery requirements before purchase |
+| Seller trust | Whether the page identifies the seller and supports authorization or registration claims |
+| Policy compliance | Whether terms or policies contain required cancellation, privacy or support conditions |
+
+Use the free `preview_verification` MCP tool first when the buyer needs to inspect
+the complete result contract without fetching a page, calling OpenAI or making a
+payment. Use `verificar_condicoes` for a fresh verification of a real public URL.
 
 ### Simple x402 integration
 
@@ -94,6 +106,19 @@ evidence, and absence of evidence. The real paid result uses the fetched page,
 current timestamp, a unique `verificationId`, and the SHA-256 hash of the page
 content.
 
+### Free MCP preview tool
+
+`preview_verification` is a free, model-callable MCP tool. It performs no live
+web request, OpenAI call or payment. Choose one of these values:
+
+- `offer_terms`
+- `seller_trust`
+- `policy_compliance`
+
+It returns a realistic structured input and result, identifies the paid
+`verificar_condicoes` tool and provides the exact next step. Preview calls are
+logged separately and never counted as paid demand or revenue.
+
 ### Live endpoints
 
 - MCP: `https://mcp-x402-production.up.railway.app/mcp`
@@ -150,6 +175,7 @@ This is designed for agents that need an evidence-based decision before taking t
 
 | Tool | Description | Price |
 | --- | --- | --- |
+| `preview_verification` | Returns a static structured example for offer, seller or policy verification. No network retrieval or OpenAI call. | Free |
 | `consultar_ia` | Sends a prompt to the OpenAI Responses API. | $0.02 USDC |
 | `analisar_url` | Fetches and analyzes a public HTTP or HTTPS page. | $0.05 USDC |
 | `verificar_condicoes` | Verifies concrete conditions on a public page and returns evidence-based decisions. | $0.05 USDC |

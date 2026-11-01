@@ -17,6 +17,8 @@ import {
   BAZAAR_TOOL_DESCRIPTIONS,
   MCP_ARGUMENT_DESCRIPTIONS,
   MCP_TOOL_DESCRIPTIONS,
+  VERIFICATION_PREVIEW_CASES,
+  VERIFICATION_USE_CASES,
 } from "./tool-metadata.js";
 
 const validDiagnostic: McpPrePaymentDiagnostic = {
@@ -119,12 +121,18 @@ test("publishes standards-based payment and help discovery", () => {
 });
 
 test("publishes tool metadata with selection guidance and result boundaries", () => {
+  assert.match(MCP_TOOL_DESCRIPTIONS.preview_verification, /free static preview/i);
+  assert.match(MCP_TOOL_DESCRIPTIONS.preview_verification, /no web request/i);
+  assert.match(MCP_TOOL_DESCRIPTIONS.preview_verification, /no.*payment/i);
   assert.match(MCP_TOOL_DESCRIPTIONS.consultar_ia, /analisar_url/);
   assert.match(MCP_TOOL_DESCRIPTIONS.consultar_ia, /verificar_condicoes/);
   assert.match(MCP_TOOL_DESCRIPTIONS.analisar_url, /does not consult other sources/i);
   assert.match(MCP_TOOL_DESCRIPTIONS.verificar_condicoes, /verificationId/);
   assert.match(MCP_TOOL_DESCRIPTIONS.verificar_condicoes, /pageHash/);
   assert.match(MCP_TOOL_DESCRIPTIONS.verificar_condicoes, /trusts, buys or acts/);
+  assert.match(MCP_TOOL_DESCRIPTIONS.verificar_condicoes, /offer and warranty/i);
+  assert.match(MCP_TOOL_DESCRIPTIONS.verificar_condicoes, /seller identity/i);
+  assert.match(MCP_TOOL_DESCRIPTIONS.verificar_condicoes, /policy compliance/i);
 
   for (const description of Object.values(BAZAAR_TOOL_DESCRIPTIONS)) {
     assert.match(description, /^Use /);
@@ -133,6 +141,24 @@ test("publishes tool metadata with selection guidance and result boundaries", ()
 
   assert.match(MCP_ARGUMENT_DESCRIPTIONS.analysisObjective, /não é tratado como prova/);
   assert.match(MCP_ARGUMENT_DESCRIPTIONS.verificationContext, /nunca como prova/);
+});
+
+test("publishes three free buyer-oriented verification previews", () => {
+  assert.deepEqual(VERIFICATION_USE_CASES, [
+    "offer_terms",
+    "seller_trust",
+    "policy_compliance",
+  ]);
+
+  for (const useCase of VERIFICATION_USE_CASES) {
+    const preview = VERIFICATION_PREVIEW_CASES[useCase];
+    assert.equal(preview.input.condicoes.length, 3);
+    assert.deepEqual(
+      preview.output.decisao.condicoes.map(({ estado }) => estado),
+      ["confirmada", "rejeitada", "incerta"],
+    );
+    assert.match(preview.output.pageHash, /^sha256:[a-f0-9]{64}$/);
+  }
 });
 
 test("publishes machine-readable Bazaar input and output examples", () => {
@@ -168,6 +194,11 @@ test("publishes the free static verification demonstration in the README", () =>
   const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
 
   assert.match(readme, /Free static result demonstration/);
+  assert.match(readme, /Free MCP preview tool/);
+  assert.match(readme, /preview_verification/);
+  assert.match(readme, /offer_terms/);
+  assert.match(readme, /seller_trust/);
+  assert.match(readme, /policy_compliance/);
   assert.match(readme, /performs no request, OpenAI call, or[\s\S]*payment/);
   assert.match(readme, /https:\/\/shop\.example\/offers\/refurbished-laptop/);
   assert.match(readme, /"estado": "confirmada"/);
