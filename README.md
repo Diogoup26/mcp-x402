@@ -32,7 +32,8 @@ Each verification includes the final source URL, page title, timestamp, conditio
 | Seller trust | Whether the page identifies the seller and supports authorization or registration claims |
 | Policy compliance | Whether terms or policies contain required cancellation, privacy or support conditions |
 
-Use the free `preview_verification` MCP tool first when the buyer needs to inspect
+Use the free `preview_verification` MCP tool or the free HTTP endpoint
+`POST /preview/verify-conditions` first when the buyer needs to inspect
 the complete result contract without fetching a page, calling OpenAI or making a
 payment. Use `verificar_condicoes` for a fresh verification of a real public URL.
 
@@ -124,6 +125,7 @@ logged separately and never counted as paid demand or revenue.
 - MCP: `https://mcp-x402-production.up.railway.app/mcp`
 - Free MCP preflight: `POST https://mcp-x402-production.up.railway.app/preflight/mcp`
 - Free verification preflight: `POST https://mcp-x402-production.up.railway.app/preflight/verify-conditions`
+- Free static HTTP preview: `POST https://mcp-x402-production.up.railway.app/preview/verify-conditions`
 - Paid verification: `POST https://mcp-x402-production.up.railway.app/verify-conditions`
 - Health: `GET https://mcp-x402-production.up.railway.app/health`
 

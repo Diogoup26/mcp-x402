@@ -190,6 +190,19 @@ test("publishes machine-readable Bazaar input and output examples", () => {
   );
 });
 
+test("keeps Bazaar discovery metadata within the official limits", () => {
+  const server = readFileSync(new URL("../src/server.ts", import.meta.url), "utf8");
+
+  assert.match(server, /const SERVICE_NAME = "MCP x402 Verification"/);
+  assert.match(server, /const VERIFICATION_DISCOVERY_TAGS = \[/);
+  assert.match(server, /iconUrl: SERVICE_ICON_URL/);
+  assert.match(
+    server,
+    /example: BAZAAR_TOOL_EXAMPLES\.verificar_condicoes\.output,[\s\S]*schema: BAZAAR_OUTPUT_SCHEMAS\.verificar_condicoes/,
+  );
+  assert.match(server, /VERIFICATION_PREVIEW_PATH/);
+});
+
 test("publishes the free static verification demonstration in the README", () => {
   const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
 
