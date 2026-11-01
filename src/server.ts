@@ -42,6 +42,8 @@ import {
 } from "./mcp-observability.js";
 import {
   BAZAAR_ARGUMENT_DESCRIPTIONS,
+  BAZAAR_OUTPUT_SCHEMAS,
+  BAZAAR_TOOL_EXAMPLES,
   BAZAAR_TOOL_DESCRIPTIONS,
   MCP_ARGUMENT_DESCRIPTIONS,
   MCP_TOOL_DESCRIPTIONS,
@@ -81,6 +83,7 @@ const CONSULT_PRICE = "$0.02";
 const ANALYZE_PRICE = "$0.05";
 const VERIFY_PRICE = "$0.05";
 const SERVICE_VERSION = "1.2.9";
+const SERVICE_NAME = "MCP x402 - Evidence-Backed Web Verification";
 const X402_FACILITATOR_URL = "https://x402.org/facilitator";
 const DISCOVERY_PATHS = new Set([
   "/",
@@ -603,6 +606,25 @@ const verificationDecisionSchema = z.object({
 
 type VerificationDecision = z.infer<typeof verificationDecisionSchema>;
 
+const consultOutputSchema = z.object({
+  answer: z.string(),
+});
+
+const analyzeOutputSchema = z.object({
+  source: z.string().url(),
+  title: z.string(),
+  report: z.string(),
+});
+
+const verificationOutputSchema = z.object({
+  source: z.string().url(),
+  title: z.string(),
+  verifiedAt: z.string(),
+  decisao: verificationDecisionSchema,
+  verificationId: z.string().uuid(),
+  pageHash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+});
+
 
 type AnalyzeUrlInput = z.infer<typeof analyzeUrlInput>;
 
@@ -1001,9 +1023,10 @@ const paidConsultTool = createPaymentWrapper(paymentServer, {
   hooks: createMcpPaymentHooks("consultar_ia"),
   resource: {
     url: PUBLIC_MCP_SERVER_URL,
-    description: "Consulta paga à OpenAI.",
-    serviceName: "Diogo AI Service",
-    tags: ["ai", "openai"],
+    description:
+      "General AI consultation without live web retrieval. Secondary tool of an evidence-backed verification service.",
+    serviceName: SERVICE_NAME,
+    tags: ["ai", "general-knowledge", "agent-tools"],
   },
   extensions: declareDiscoveryExtension({
     toolName: 'consultar_ia',
@@ -1017,6 +1040,11 @@ const paidConsultTool = createPaymentWrapper(paymentServer, {
       required: ['prompt'],
       additionalProperties: false,
     },
+    example: BAZAAR_TOOL_EXAMPLES.consultar_ia.input,
+    output: {
+      example: BAZAAR_TOOL_EXAMPLES.consultar_ia.output,
+      schema: BAZAAR_OUTPUT_SCHEMAS.consultar_ia,
+    },
   }),
 });
 
@@ -1025,9 +1053,10 @@ const paidAnalyzeUrlTool = createPaymentWrapper(paymentServer, {
   hooks: createMcpPaymentHooks("analisar_url"),
   resource: {
     url: PUBLIC_MCP_SERVER_URL,
-    description: "Análise paga de uma página web pública.",
-    serviceName: "Diogo AI Service",
-    tags: ["ai", "url-analysis", "research"],
+    description:
+      "Source-bounded analysis of one public web page for agent decision support.",
+    serviceName: SERVICE_NAME,
+    tags: ["web-analysis", "evidence", "source-bounded", "agent-safety"],
   },
   extensions: declareDiscoveryExtension({
     toolName: 'analisar_url',
@@ -1042,6 +1071,11 @@ const paidAnalyzeUrlTool = createPaymentWrapper(paymentServer, {
       required: ['url'],
       additionalProperties: false,
     },
+    example: BAZAAR_TOOL_EXAMPLES.analisar_url.input,
+    output: {
+      example: BAZAAR_TOOL_EXAMPLES.analisar_url.output,
+      schema: BAZAAR_OUTPUT_SCHEMAS.analisar_url,
+    },
   }),
 });
 
@@ -1051,9 +1085,16 @@ const paidVerifyConditionsTool = createPaymentWrapper(paymentServer, {
   resource: {
     url: PUBLIC_MCP_SERVER_URL,
     description:
-      "Verifica se uma página pública cumpre condições concretas e devolve decisão com provas.",
-    serviceName: "Diogo AI Service",
-    tags: ["ai", "verification", "web"],
+      "Evidence-backed verification of seller, offer, product, policy or claim conditions before an agent acts.",
+    serviceName: SERVICE_NAME,
+    tags: [
+      "seller-verification",
+      "pre-purchase",
+      "policy-check",
+      "evidence",
+      "due-diligence",
+      "agent-safety",
+    ],
   },
   extensions: declareDiscoveryExtension({
     toolName: "verificar_condicoes",
@@ -1081,6 +1122,11 @@ const paidVerifyConditionsTool = createPaymentWrapper(paymentServer, {
       },
       required: ["url", "condicoes"],
       additionalProperties: false,
+    },
+    example: BAZAAR_TOOL_EXAMPLES.verificar_condicoes.input,
+    output: {
+      example: BAZAAR_TOOL_EXAMPLES.verificar_condicoes.output,
+      schema: BAZAAR_OUTPUT_SCHEMAS.verificar_condicoes,
     },
   }),
 });
@@ -1210,21 +1256,31 @@ const paidVerifyConditionsToolV2 =
 
 const handler = createMcpHandler(() => {
   const server = new McpServer({
-    name: "diogo-ai-service",
+    name: "mcp-x402",
     version: SERVICE_VERSION,
   });
 
   server.registerTool(
     "consultar_ia",
     {
-      title: "Consultar IA",
+      title: "General AI consultation",
       description: MCP_TOOL_DESCRIPTIONS.consultar_ia,
       inputSchema: consultInput,
+      outputSchema: consultOutputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
+      },
     },
     paidConsultToolV2(async ({ prompt }) => {
       try {
         const answer = await askOpenAI(prompt, "consultar_ia", 2_000);
-        return { content: [{ type: "text", text: answer }] };
+        const output = { answer };
+        return {
+          content: [{ type: "text", text: answer }],
+          structuredContent: output,
+        };
       } catch (error) {
         const message = error instanceof Error ? error.message : "Erro desconhecido";
         return {
@@ -1238,9 +1294,15 @@ const handler = createMcpHandler(() => {
   server.registerTool(
     "analisar_url",
     {
-      title: "Analisar página web",
+      title: "Analyze a public web page",
       description: MCP_TOOL_DESCRIPTIONS.analisar_url,
       inputSchema: analyzeUrlInput,
+      outputSchema: analyzeOutputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: true,
+      },
     },
     paidAnalyzeUrlToolV2(async ({ url, objetivo }) => {
       try {
@@ -1253,6 +1315,7 @@ const handler = createMcpHandler(() => {
               text: `Fonte: ${analysis.source}\nTítulo: ${analysis.title}\n\n${analysis.report}`,
             },
           ],
+          structuredContent: analysis,
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : "Erro desconhecido";
@@ -1267,9 +1330,15 @@ const handler = createMcpHandler(() => {
     server.registerTool(
     "verificar_condicoes",
     {
-      title: "Verificar condições",
+      title: "Verify conditions with evidence",
       description: MCP_TOOL_DESCRIPTIONS.verificar_condicoes,
       inputSchema: verifyConditionsInput,
+      outputSchema: verificationOutputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: true,
+      },
     },
     paidVerifyConditionsToolV2(async ({ url, condicoes, contexto }) => {
       try {
@@ -1286,6 +1355,7 @@ const handler = createMcpHandler(() => {
               text: JSON.stringify(verification, null, 2),
             },
           ],
+          structuredContent: verification,
         };
       } catch (error) {
         const message =
@@ -2076,8 +2146,8 @@ const requireAnalyzePayment = paymentMiddleware(
       description:
         "Payment required. Send a valid JSON body. After HTTP 402, read payment-required, authorize the stated USDC payment on Base, then repeat the identical POST request. Returns summary, facts, risks and recommended actions.",
       mimeType: "application/json",
-      serviceName: "MCP x402 - Evidence-Backed Web Verification",
-      tags: ["ai", "url-analysis", "research"],
+      serviceName: SERVICE_NAME,
+      tags: ["web-analysis", "evidence", "source-bounded", "agent-safety"],
       extensions: {
         ...declareDiscoveryExtension({
           bodyType: 'json',
@@ -2120,8 +2190,15 @@ const requireVerifyConditionsPayment = paymentMiddleware(
       description:
             "Payment required. Send a valid JSON body with url and 1 to 10 conditions. After HTTP 402, read payment-required, authorize the stated USDC payment on Base, then repeat the identical POST request. Returns a decision per condition, textual evidence when available, verificationId and SHA-256 page hash.",
       mimeType: "application/json",
-      serviceName: "Diogo AI Condition Verification",
-      tags: ["ai", "verification", "evidence", "web"],
+      serviceName: SERVICE_NAME,
+      tags: [
+        "seller-verification",
+        "pre-purchase",
+        "policy-check",
+        "evidence",
+        "due-diligence",
+        "agent-safety",
+      ],
       extensions: {
         ...declareDiscoveryExtension({
           bodyType: "json",
@@ -2216,10 +2293,10 @@ app.get("/favicon.ico", (_req, res) => {
 
 app.get("/", (_req, res) => {
   res.json({
-    name: "MCP x402 - Evidence-Backed Web Verification",
+    name: SERVICE_NAME,
     version: SERVICE_VERSION,
     description:
-     "PT: Verificação baseada em evidência para agentes de IA antes de tomarem decisões sobre vendedores, produtos, ofertas, políticas ou afirmações. PT: Serviço MCP/x402 para análise de páginas web e verificação auditável de condições.",
+      "EN: Evidence-backed web verification for AI agents before they trust, buy or act on sellers, products, offers, policies or claims. PT: Verificação web baseada em evidência para agentes de IA antes de confiarem, comprarem ou agirem.",
     discovery: {
       x402: `${PUBLIC_SERVICE_URL}/.well-known/x402`,
       openapi: `${PUBLIC_SERVICE_URL}/openapi.json`,
@@ -2256,7 +2333,7 @@ app.get("/.well-known/x402", (_req, res) => {
   res.json({
     x402Version: 2,
     service: {
-      name: "MCP x402 - Evidence-Backed Web Verification",
+      name: SERVICE_NAME,
       description:
         "EN: Evidence-backed verification for AI agents before acting on sellers, products, offers, policies, or claims. PT: Verificação baseada em evidência para agentes de IA antes de agirem sobre vendedores, produtos, ofertas, políticas ou afirmações.",
       url: PUBLIC_SERVICE_URL,
@@ -2314,7 +2391,7 @@ app.get("/openapi.json", (_req, res) => {
   res.json({
     openapi: "3.1.0",
     info: {
-      title: "MCP x402 - Evidence-Backed Web Verification",
+      title: SERVICE_NAME,
       version: SERVICE_VERSION,
       description:
         "EN: x402 service for AI analysis of public web pages and auditable condition verification. Payment instructions are returned through the payment-required header. PT: Serviço x402 para análise com IA de páginas web públicas e verificação auditável de condições. As instruções de pagamento são devolvidas no cabeçalho payment-required.",
@@ -2727,10 +2804,10 @@ app.get("/openapi.json", (_req, res) => {
 
 app.get("/agents.json", (_req, res) => {
   res.json({
-    name: "MCP x402 - Evidence-Backed Web Verification",
+    name: SERVICE_NAME,
     version: SERVICE_VERSION,
     description:
-     "EN: MCP/x402 service for public URL analysis, AI consultation and auditable condition verification. PT: Serviço MCP/x402 para análise de URLs públicas, consulta de IA e verificação auditável de condições.",
+      "EN: Evidence-backed MCP/x402 verification before an AI agent trusts, buys or acts, plus source-bounded URL analysis. PT: Verificação MCP/x402 baseada em evidência antes de um agente confiar, comprar ou agir, além de análise de URLs limitada à fonte.",
     languages: {
      documentation: ["en", "pt-PT"],
      responseBehavior:

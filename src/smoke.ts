@@ -393,6 +393,31 @@ async function main(): Promise<void> {
   ]) {
     assert(toolNames.has(expectedTool), `Ferramenta MCP ausente: ${expectedTool}`);
   }
+  const verificationTool = tools.find(
+    (tool) =>
+      tool !== null &&
+      typeof tool === "object" &&
+      (tool as { name?: unknown }).name === "verificar_condicoes",
+  ) as {
+    outputSchema?: { required?: unknown[] };
+    annotations?: {
+      readOnlyHint?: unknown;
+      destructiveHint?: unknown;
+      openWorldHint?: unknown;
+    };
+  } | undefined;
+  assert(
+    Array.isArray(verificationTool?.outputSchema?.required) &&
+      verificationTool.outputSchema.required.includes("pageHash") &&
+      verificationTool.outputSchema.required.includes("decisao"),
+    "Ferramenta de verificação sem outputSchema estruturado",
+  );
+  assert(
+    verificationTool?.annotations?.readOnlyHint === true &&
+      verificationTool.annotations.destructiveHint === false &&
+      verificationTool.annotations.openWorldHint === true,
+    "Ferramenta de verificação sem annotations de segurança corretas",
+  );
 
   const toolChallenge = await expectStatus(
     "MCP paid tool challenge",
@@ -421,6 +446,7 @@ async function main(): Promise<void> {
         bazaar?: {
           info?: {
             input?: { type?: unknown; toolName?: unknown };
+            output?: { example?: unknown; schema?: unknown };
           };
         };
       };
@@ -446,6 +472,13 @@ async function main(): Promise<void> {
   assert(
     bazaarInput?.toolName === "verificar_condicoes",
     "Extensão Bazaar não preservou o toolName",
+  );
+  const bazaarOutput =
+    toolChallengeResult.structuredContent?.extensions?.bazaar?.info?.output;
+  assert(
+    bazaarOutput?.example !== undefined &&
+      bazaarOutput.schema !== undefined,
+    "Extensão Bazaar MCP sem exemplo e schema de output",
   );
   assert(
     toolChallenge.headers.get("x-feedback-endpoint") ===
