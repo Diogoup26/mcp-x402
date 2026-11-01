@@ -11,6 +11,8 @@ import {
   type McpPrePaymentDiagnostic,
 } from "./mcp-observability.js";
 import {
+  BAZAAR_OUTPUT_SCHEMAS,
+  BAZAAR_TOOL_EXAMPLES,
   BAZAAR_TOOL_DESCRIPTIONS,
   MCP_ARGUMENT_DESCRIPTIONS,
   MCP_TOOL_DESCRIPTIONS,
@@ -118,9 +120,10 @@ test("publishes standards-based payment and help discovery", () => {
 test("publishes tool metadata with selection guidance and result boundaries", () => {
   assert.match(MCP_TOOL_DESCRIPTIONS.consultar_ia, /analisar_url/);
   assert.match(MCP_TOOL_DESCRIPTIONS.consultar_ia, /verificar_condicoes/);
-  assert.match(MCP_TOOL_DESCRIPTIONS.analisar_url, /Não consulta fontes externas/);
+  assert.match(MCP_TOOL_DESCRIPTIONS.analisar_url, /does not consult other sources/i);
   assert.match(MCP_TOOL_DESCRIPTIONS.verificar_condicoes, /verificationId/);
   assert.match(MCP_TOOL_DESCRIPTIONS.verificar_condicoes, /pageHash/);
+  assert.match(MCP_TOOL_DESCRIPTIONS.verificar_condicoes, /trusts, buys or acts/);
 
   for (const description of Object.values(BAZAAR_TOOL_DESCRIPTIONS)) {
     assert.match(description, /^Use /);
@@ -129,4 +132,32 @@ test("publishes tool metadata with selection guidance and result boundaries", ()
 
   assert.match(MCP_ARGUMENT_DESCRIPTIONS.analysisObjective, /não é tratado como prova/);
   assert.match(MCP_ARGUMENT_DESCRIPTIONS.verificationContext, /nunca como prova/);
+});
+
+test("publishes machine-readable Bazaar input and output examples", () => {
+  assert.equal(
+    BAZAAR_TOOL_EXAMPLES.verificar_condicoes.input.condicoes.length,
+    2,
+  );
+  assert.equal(
+    BAZAAR_TOOL_EXAMPLES.verificar_condicoes.output.decisao.condicoes[0]
+      ?.estado,
+    "incerta",
+  );
+
+  for (const schema of Object.values(BAZAAR_OUTPUT_SCHEMAS)) {
+    assert.equal(schema.type, "object");
+    assert.equal(schema.additionalProperties, false);
+    assert.ok(schema.required.length > 0);
+  }
+
+  assert.deepEqual(
+    BAZAAR_OUTPUT_SCHEMAS.verificar_condicoes.properties.decisao.properties
+      .decisao.enum,
+    ["confirmado", "rejeitado", "incerto"],
+  );
+  assert.equal(
+    BAZAAR_OUTPUT_SCHEMAS.verificar_condicoes.properties.pageHash.pattern,
+    "^sha256:[a-f0-9]{64}$",
+  );
 });

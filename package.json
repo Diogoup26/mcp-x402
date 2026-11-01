@@ -1,7 +1,7 @@
 {
   "name": "mcp-x402",
   "version": "1.2.9",
-  "description": "",
+  "description": "Evidence-backed x402 web verification for AI agents, with auditable decisions, textual evidence and structured MCP results.",
   "main": "dist/server.js",
   "scripts": {
     "test": "npm run build && node --test dist/improvements.test.js",
@@ -17,8 +17,16 @@
     "logs:analyze": "node ./scripts/analyze-railway-ndjson.mjs",
     "test:logs": "node --test ./scripts/analyze-railway-ndjson.test.mjs"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "mcp",
+    "x402",
+    "ai-agents",
+    "web-verification",
+    "evidence",
+    "usdc",
+    "base"
+  ],
+  "author": "Diogoup26",
   "license": "ISC",
   "type": "module",
   "dependencies": {
