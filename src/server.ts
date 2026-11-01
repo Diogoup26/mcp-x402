@@ -47,6 +47,8 @@ import {
   BAZAAR_TOOL_DESCRIPTIONS,
   MCP_ARGUMENT_DESCRIPTIONS,
   MCP_TOOL_DESCRIPTIONS,
+  VERIFICATION_PREVIEW_CASES,
+  VERIFICATION_USE_CASES,
 } from "./tool-metadata.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
@@ -82,7 +84,7 @@ const X402_NETWORK = (process.env.X402_NETWORK ?? "eip155:84532") as `${string}:
 const CONSULT_PRICE = "$0.02";
 const ANALYZE_PRICE = "$0.05";
 const VERIFY_PRICE = "$0.05";
-const SERVICE_VERSION = "1.2.9";
+const SERVICE_VERSION = "1.2.10";
 const SERVICE_NAME = "MCP x402 - Evidence-Backed Web Verification";
 const X402_FACILITATOR_URL = "https://x402.org/facilitator";
 const DISCOVERY_PATHS = new Set([
@@ -499,6 +501,15 @@ const verifyConditionsInput = z.object({
     .describe(MCP_ARGUMENT_DESCRIPTIONS.verificationContext),
 });
 
+const previewVerificationInput = z.object({
+  useCase: z
+    .enum(VERIFICATION_USE_CASES)
+    .optional()
+    .describe(
+      "Static example to return: offer_terms, seller_trust or policy_compliance. Defaults to offer_terms.",
+    ),
+});
+
 const mcpPreflightInput = z.discriminatedUnion("toolName", [
   z.object({
     toolName: z.literal("consultar_ia"),
@@ -623,6 +634,21 @@ const verificationOutputSchema = z.object({
   decisao: verificationDecisionSchema,
   verificationId: z.string().uuid(),
   pageHash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+});
+
+const previewVerificationOutputSchema = z.object({
+  kind: z.literal("static_example"),
+  useCase: z.enum(VERIFICATION_USE_CASES),
+  label: z.string(),
+  liveRequestPerformed: z.literal(false),
+  openAiUsed: z.literal(false),
+  paymentRequired: z.literal(false),
+  paidTool: z.literal("verificar_condicoes"),
+  price: z.string(),
+  network: z.string(),
+  exampleInput: verifyConditionsInput,
+  exampleOutput: verificationOutputSchema,
+  nextStep: z.string(),
 });
 
 
@@ -1085,12 +1111,15 @@ const paidVerifyConditionsTool = createPaymentWrapper(paymentServer, {
   resource: {
     url: PUBLIC_MCP_SERVER_URL,
     description:
-      "Evidence-backed verification of seller, offer, product, policy or claim conditions before an agent acts.",
+      "Evidence-backed pre-purchase decisions for offer and warranty terms, seller identity or authorization, and policy compliance.",
     serviceName: SERVICE_NAME,
     tags: [
       "seller-verification",
+      "seller-trust",
       "pre-purchase",
       "policy-check",
+      "policy-compliance",
+      "warranty-check",
       "evidence",
       "due-diligence",
       "agent-safety",
@@ -1259,6 +1288,62 @@ const handler = createMcpHandler(() => {
     name: "mcp-x402",
     version: SERVICE_VERSION,
   });
+
+  server.registerTool(
+    "preview_verification",
+    {
+      title: "Preview an evidence-backed verification for free",
+      description: MCP_TOOL_DESCRIPTIONS.preview_verification,
+      inputSchema: previewVerificationInput,
+      outputSchema: previewVerificationOutputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
+      },
+    },
+    async ({ useCase }) => {
+      const selectedUseCase = useCase ?? "offer_terms";
+      const preview = VERIFICATION_PREVIEW_CASES[selectedUseCase];
+      const trace = mcpRequestContext.getStore();
+      const startedAt = Date.now();
+
+      if (trace) {
+        trace.state.handlerReached = true;
+        trace.state.executionStartedAt = startedAt;
+        trace.state.executionFinishedAt = startedAt;
+        trace.state.executionSucceeded = true;
+      }
+
+      const output = {
+        kind: "static_example" as const,
+        useCase: selectedUseCase,
+        label: preview.label,
+        liveRequestPerformed: false as const,
+        openAiUsed: false as const,
+        paymentRequired: false as const,
+        paidTool: "verificar_condicoes" as const,
+        price: VERIFY_PRICE,
+        network: X402_NETWORK,
+        exampleInput: structuredClone(preview.input),
+        exampleOutput: structuredClone(preview.output),
+        nextStep:
+          "Call verificar_condicoes with a real public URL and explicit conditions. The paid tool will return a fresh verification, timestamp, verificationId and pageHash.",
+      };
+
+      logMcpLifecycle("mcp_preview_requested", {
+        toolName: "preview_verification",
+        useCase: selectedUseCase,
+        paymentRequired: false,
+        openAiUsed: false,
+      });
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(output, null, 2) }],
+        structuredContent: output,
+      };
+    },
+  );
 
   server.registerTool(
     "consultar_ia",
@@ -2188,13 +2273,16 @@ const requireVerifyConditionsPayment = paymentMiddleware(
         payTo: PAY_TO,
       },
       description:
-            "Payment required. Send a valid JSON body with url and 1 to 10 conditions. After HTTP 402, read payment-required, authorize the stated USDC payment on Base, then repeat the identical POST request. Returns a decision per condition, textual evidence when available, verificationId and SHA-256 page hash.",
+            "Evidence-backed pre-purchase verification for offer and warranty terms, seller identity or authorization, and policy compliance. Send a valid JSON body with url and 1 to 10 conditions. Returns a decision per condition, textual evidence when available, verificationId and SHA-256 page hash.",
       mimeType: "application/json",
       serviceName: SERVICE_NAME,
       tags: [
         "seller-verification",
+        "seller-trust",
         "pre-purchase",
         "policy-check",
+        "policy-compliance",
+        "warranty-check",
         "evidence",
         "due-diligence",
         "agent-safety",
@@ -2269,7 +2357,7 @@ app.get("/health", (_req, res) => {
     model: OPENAI_MODEL,
     version: SERVICE_VERSION,
     publicMcpServerUrl: PUBLIC_MCP_SERVER_URL,
-    tools: [...SUPPORTED_MCP_TOOL_NAMES],
+    tools: ["preview_verification", ...SUPPORTED_MCP_TOOL_NAMES],
     paidEndpoint: {
       method: "POST",
       path: "/analyze",
@@ -2842,6 +2930,7 @@ app.get("/agents.json", (_req, res) => {
       freeTextAccepted: false,
     },
     capabilities: [
+      "Pré-visualizar gratuitamente verificações de oferta, vendedor e política",
       "Analisar uma URL pública",
       "Resumir e extrair factos",
       "Identificar riscos e ações recomendadas",
@@ -2861,6 +2950,7 @@ app.get("/llms.txt", (_req, res) => {
 ## Endpoints
 
 - MCP: ${PUBLIC_SERVICE_URL}/mcp
+- Preview MCP gratuito: ferramenta preview_verification — exemplos estruturados para offer_terms, seller_trust e policy_compliance; não consulta a web, não usa OpenAI e não cobra
 - Análise paga: POST ${PUBLIC_SERVICE_URL}/analyze
 - Verificação paga: POST ${PUBLIC_SERVICE_URL}/verify-conditions — decisão por condição, provas, verificationId e pageHash SHA-256
 - Pré-validação gratuita da análise: POST ${PUBLIC_SERVICE_URL}/preflight/analyze — valida o JSON, informa preço e explica o próximo passo sem cobrar
@@ -2880,6 +2970,7 @@ Clientes automáticos recomendados: @x402/fetch para REST e @x402/mcp para MCP. 
 ## Demonstração estática gratuita — nenhuma chamada ou pagamento é efetuado
 
 Este exemplo mostra exatamente a estrutura recebida por 0,05 USDC. A oferta, o vendedor, o timestamp, o ID e o hash são fictícios e servem apenas para demonstrar o contrato do resultado.
+Um agente MCP pode obter esta demonstração chamando gratuitamente preview_verification com useCase igual a offer_terms, seller_trust ou policy_compliance.
 
 POST ${PUBLIC_SERVICE_URL}/verify-conditions
 Content-Type: application/json

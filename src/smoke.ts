@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-const SERVICE_VERSION = "1.2.9";
+const SERVICE_VERSION = "1.2.10";
 const SERVICE_URL = (
   process.env.SERVICE_URL ??
   "https://mcp-x402-production.up.railway.app"
@@ -434,6 +434,7 @@ async function main(): Promise<void> {
       .filter((name): name is string => name !== null),
   );
   for (const expectedTool of [
+    "preview_verification",
     "consultar_ia",
     "analisar_url",
     "verificar_condicoes",
@@ -466,6 +467,76 @@ async function main(): Promise<void> {
     "Ferramenta de verificação sem annotations de segurança corretas",
   );
 
+  const previewTool = tools.find(
+    (tool) =>
+      tool !== null &&
+      typeof tool === "object" &&
+      (tool as { name?: unknown }).name === "preview_verification",
+  ) as {
+    outputSchema?: { required?: unknown[] };
+    annotations?: {
+      readOnlyHint?: unknown;
+      destructiveHint?: unknown;
+      openWorldHint?: unknown;
+    };
+  } | undefined;
+  assert(
+    Array.isArray(previewTool?.outputSchema?.required) &&
+      previewTool.outputSchema.required.includes("exampleInput") &&
+      previewTool.outputSchema.required.includes("exampleOutput") &&
+      previewTool.outputSchema.required.includes("paymentRequired"),
+    "Preview gratuito sem outputSchema estruturado",
+  );
+  assert(
+    previewTool?.annotations?.readOnlyHint === true &&
+      previewTool.annotations.destructiveHint === false &&
+      previewTool.annotations.openWorldHint === false,
+    "Preview gratuito sem annotations de segurança corretas",
+  );
+
+  const previewResponse = await expectStatus(
+    "MCP free verification preview",
+    "/mcp",
+    200,
+    mcpInit(
+      {
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: {
+          name: "preview_verification",
+          arguments: { useCase: "seller_trust" },
+        },
+      },
+      "2025-06-18",
+    ),
+  );
+  const previewResponseBody = await parseMcpResponse(previewResponse);
+  const previewResult = previewResponseBody.result as {
+    isError?: unknown;
+    structuredContent?: {
+      kind?: unknown;
+      useCase?: unknown;
+      liveRequestPerformed?: unknown;
+      openAiUsed?: unknown;
+      paymentRequired?: unknown;
+      paidTool?: unknown;
+      exampleOutput?: { pageHash?: unknown; decisao?: unknown };
+    };
+  } | undefined;
+  assert(
+    previewResult?.isError !== true &&
+      previewResult?.structuredContent?.kind === "static_example" &&
+      previewResult.structuredContent.useCase === "seller_trust" &&
+      previewResult.structuredContent.liveRequestPerformed === false &&
+      previewResult.structuredContent.openAiUsed === false &&
+      previewResult.structuredContent.paymentRequired === false &&
+      previewResult.structuredContent.paidTool === "verificar_condicoes" &&
+      typeof previewResult.structuredContent.exampleOutput?.pageHash === "string" &&
+      previewResult.structuredContent.exampleOutput.decisao !== undefined,
+    "Preview gratuito não devolveu o contrato estático esperado",
+  );
+
   const toolChallenge = await expectStatus(
     "MCP paid tool challenge",
     "/mcp",
@@ -473,7 +544,7 @@ async function main(): Promise<void> {
     mcpInit(
       {
         jsonrpc: "2.0",
-        id: 3,
+        id: 4,
         method: "tools/call",
         params: {
           name: "verificar_condicoes",

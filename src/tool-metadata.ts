@@ -1,10 +1,12 @@
 export const MCP_TOOL_DESCRIPTIONS = {
+  preview_verification:
+    "Use this free static preview before paying for verificar_condicoes. Choose offer_terms to inspect warranty, returns and availability; seller_trust to inspect seller identity and authorization; or policy_compliance to inspect required policy terms. It performs no web request, OpenAI call or payment and returns a realistic structured example plus the exact paid next step. PT: Pré-visualização gratuita e estática da verificação.",
   consultar_ia:
     "Use for general questions that do not require live web retrieval. Returns a concise model answer and does not fetch URLs or verify current facts. Use analisar_url for a source-bounded page report and verificar_condicoes for evidence-backed decisions. PT: Use para perguntas gerais sem pesquisa web em tempo real.",
   analisar_url:
     "Use to fetch one public HTTP or HTTPS page and return a source-bounded report with summary, facts, risks and recommended actions. The optional objective controls focus but is never evidence. It does not consult other sources; use verificar_condicoes for condition-by-condition decisions. PT: Analisa uma página pública sem usar fontes externas.",
   verificar_condicoes:
-    "Use before an agent trusts, buys or acts to test 1 to 10 explicit conditions against one public HTTP or HTTPS page. Returns confirmed, rejected or uncertain for every condition with textual evidence when available, plus source, verifiedAt, verificationId and pageHash. Missing evidence produces uncertain, not a false confirmation. PT: Verifica condições com prova auditável.",
+    "Use before an agent trusts, buys or acts to test 1 to 10 explicit conditions against one public HTTP or HTTPS page. Best fits offer and warranty checks, seller identity or authorization checks, and policy compliance checks. Returns confirmed, rejected or uncertain for every condition with textual evidence when available, plus source, verifiedAt, verificationId and pageHash. Missing evidence produces uncertain, not a false confirmation. Use preview_verification first when the buyer needs a free example. PT: Verifica condições com prova auditável.",
 } as const;
 
 export const BAZAAR_TOOL_DESCRIPTIONS = {
@@ -13,7 +15,153 @@ export const BAZAAR_TOOL_DESCRIPTIONS = {
   analisar_url:
     "Use to fetch one public HTTP or HTTPS page and return a source-bounded report with summary, extracted facts, risks and recommended actions. The optional objective controls focus. It does not consult external sources; use verificar_condicoes for per-condition evidence.",
   verificar_condicoes:
-    "Use to test 1 to 10 explicit conditions against one public HTTP or HTTPS page. Returns confirmed, rejected or uncertain for each condition with quoted evidence, plus source, verification time, verification ID and page hash. Missing evidence produces uncertain.",
+    "Use to test 1 to 10 explicit conditions against one public HTTP or HTTPS page before an agent buys, trusts or acts. Optimized for offer and warranty checks, seller identity or authorization checks, and policy compliance checks. Returns confirmed, rejected or uncertain for each condition with quoted evidence, plus source, verification time, verification ID and page hash. Missing evidence produces uncertain.",
+} as const;
+
+export const VERIFICATION_USE_CASES = [
+  "offer_terms",
+  "seller_trust",
+  "policy_compliance",
+] as const;
+
+export const VERIFICATION_PREVIEW_CASES = {
+  offer_terms: {
+    label: "Offer, warranty and returns check",
+    input: {
+      url: "https://shop.example/offers/refurbished-laptop",
+      condicoes: [
+        "The offer includes a 12-month warranty.",
+        "The return period is at least 30 days.",
+        "The product is available for delivery to Portugal.",
+      ],
+      contexto: "Pre-purchase offer verification.",
+    },
+    output: {
+      source: "https://shop.example/offers/refurbished-laptop",
+      title: "Refurbished Laptop Offer — Example Seller",
+      verifiedAt: "2026-01-01T00:00:00.000Z",
+      decisao: {
+        decisao: "incerto",
+        condicoes: [
+          {
+            condicao: "The offer includes a 12-month warranty.",
+            estado: "confirmada",
+            prova: "Includes a 12-month limited warranty.",
+            explicacao: "The offer explicitly states the warranty duration.",
+          },
+          {
+            condicao: "The return period is at least 30 days.",
+            estado: "rejeitada",
+            prova: "Returns accepted within 14 days of delivery.",
+            explicacao:
+              "The stated 14-day return period contradicts the required minimum.",
+          },
+          {
+            condicao: "The product is available for delivery to Portugal.",
+            estado: "incerta",
+            prova: null,
+            explicacao:
+              "The page does not identify the supported delivery countries.",
+          },
+        ],
+        resumo:
+          "The warranty is confirmed, the return requirement is rejected and delivery remains uncertain.",
+      },
+      verificationId: "00000000-0000-4000-8000-000000000000",
+      pageHash:
+        "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    },
+  },
+  seller_trust: {
+    label: "Seller identity and authorization check",
+    input: {
+      url: "https://seller.example/about",
+      condicoes: [
+        "The page identifies the legal seller.",
+        "The seller claims to be an authorized manufacturer reseller.",
+        "The page provides a verifiable company registration number.",
+      ],
+      contexto: "Seller trust verification before purchase.",
+    },
+    output: {
+      source: "https://seller.example/about",
+      title: "About Example Seller",
+      verifiedAt: "2026-01-01T00:00:00.000Z",
+      decisao: {
+        decisao: "incerto",
+        condicoes: [
+          {
+            condicao: "The page identifies the legal seller.",
+            estado: "confirmada",
+            prova: "Example Seller Europe, Lda.",
+            explicacao: "The page explicitly names the legal seller.",
+          },
+          {
+            condicao: "The seller claims to be an authorized manufacturer reseller.",
+            estado: "rejeitada",
+            prova: "We are an independent reseller and are not manufacturer-authorized.",
+            explicacao: "The page explicitly contradicts manufacturer authorization.",
+          },
+          {
+            condicao: "The page provides a verifiable company registration number.",
+            estado: "incerta",
+            prova: null,
+            explicacao: "No company registration number appears on the page.",
+          },
+        ],
+        resumo:
+          "The seller is named, manufacturer authorization is rejected and registration remains uncertain.",
+      },
+      verificationId: "11111111-1111-4111-8111-111111111111",
+      pageHash:
+        "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    },
+  },
+  policy_compliance: {
+    label: "Policy and terms compliance check",
+    input: {
+      url: "https://service.example/terms",
+      condicoes: [
+        "The policy states how personal data is deleted.",
+        "The subscription can be cancelled without a penalty.",
+        "The policy identifies a response time for support requests.",
+      ],
+      contexto: "Policy compliance check before an agent subscribes.",
+    },
+    output: {
+      source: "https://service.example/terms",
+      title: "Example Service Terms",
+      verifiedAt: "2026-01-01T00:00:00.000Z",
+      decisao: {
+        decisao: "incerto",
+        condicoes: [
+          {
+            condicao: "The policy states how personal data is deleted.",
+            estado: "confirmada",
+            prova: "Account data is deleted within 30 days of a verified request.",
+            explicacao: "The policy describes a concrete deletion process.",
+          },
+          {
+            condicao: "The subscription can be cancelled without a penalty.",
+            estado: "rejeitada",
+            prova: "Early cancellation is subject to a two-month service fee.",
+            explicacao: "The stated fee contradicts cancellation without penalty.",
+          },
+          {
+            condicao: "The policy identifies a response time for support requests.",
+            estado: "incerta",
+            prova: null,
+            explicacao: "The page does not state a support response time.",
+          },
+        ],
+        resumo:
+          "Data deletion is confirmed, penalty-free cancellation is rejected and support timing remains uncertain.",
+      },
+      verificationId: "22222222-2222-4222-8222-222222222222",
+      pageHash:
+        "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    },
+  },
 } as const;
 
 export const MCP_ARGUMENT_DESCRIPTIONS = {
