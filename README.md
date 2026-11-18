@@ -107,6 +107,18 @@ evidence, and absence of evidence. The real paid result uses the fetched page,
 current timestamp, a unique `verificationId`, and the SHA-256 hash of the page
 content.
 
+### Screen a shortlisted refurbished laptop
+
+Apply the [local decision example](examples/offer-decision.mjs) to the buyer's original request and the parsed verification response for the same offer. To try it offline, assign the example input and result above to `request` and `verification` in a Node.js module in the repository root.
+
+```js
+import { decideOffer } from "./examples/offer-decision.mjs";
+const decision = decideOffer(request.condicoes, verification);
+console.log(decision.action, decision.reasons);
+```
+
+The laptop is excluded because its quoted 14-day return period contradicts the required 30 days. A quoted contradiction excludes the offer even if another requirement is unclear. All mandatory terms need quoted support to recommend. Missing, duplicated or inconclusive evidence sends the offer to review when there is no supported contradiction. This local step makes no payment or purchase.
+
 ### Free MCP preview tool
 
 `preview_verification` is a free, model-callable MCP tool. It performs no live
